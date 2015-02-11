@@ -14,26 +14,11 @@ type CpusetGroup struct {
 }
 
 func (s *CpusetGroup) Set(d *data) error {
-	// we don't want to join this cgroup unless it is specified
-	if d.c.CpusetCpus != "" {
-		dir, err := d.path("cpuset")
-		if err != nil {
-			return err
-		}
-		if err := s.ensureParent(dir); err != nil {
-			return err
-		}
-
-		// because we are not using d.join we need to place the pid into the procs file
-		// unlike the other subsystems
-		if err := writeFile(dir, "cgroup.procs", strconv.Itoa(d.pid)); err != nil {
-			return err
-		}
-		if err := writeFile(dir, "cpuset.cpus", d.c.CpusetCpus); err != nil {
-			return err
-		}
+	dir, err := d.path("cpuset")
+	if err != nil {
+		return err
 	}
-	return nil
+	return s.SetDir(dir, d.c.CpusetCpus, d.c.CpusetMems, d.pid)
 }
 
 func (s *CpusetGroup) Remove(d *data) error {
@@ -41,6 +26,33 @@ func (s *CpusetGroup) Remove(d *data) error {
 }
 
 func (s *CpusetGroup) GetStats(path string, stats *cgroups.Stats) error {
+	return nil
+}
+
+func (s *CpusetGroup) SetDir(dir, cpus string, mems string, pid int) error {
+	if err := s.ensureParent(dir); err != nil {
+		return err
+	}
+
+	// because we are not using d.join we need to place the pid into the procs file
+	// unlike the other subsystems
+	if err := writeFile(dir, "cgroup.procs", strconv.Itoa(pid)); err != nil {
+		return err
+	}
+
+	// If we don't use --cpuset-xxx, the default value inherit from parent cgroup
+	// is set in s.ensureParent, otherwise, use the value we set
+	if cpus != "" {
+		if err := writeFile(dir, "cpuset.cpus", cpus); err != nil {
+			return err
+		}
+	}
+	if mems != "" {
+		if err := writeFile(dir, "cpuset.mems", mems); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 

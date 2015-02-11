@@ -157,7 +157,7 @@ this as the base of all your web application images.
 
 > **Note:** Docker usually gets these base images from
 > [Docker Hub](https://hub.docker.com).
-> 
+
 Docker images are then built from these base images using a simple, descriptive
 set of steps we call *instructions*. Each instruction creates a new layer in our
 image. Instructions include actions like:
@@ -198,7 +198,7 @@ then run.
 Either by using the `docker` binary or via the API, the Docker client tells the Docker
 daemon to run a container.
 
-    $ docker run -i -t ubuntu /bin/bash
+    $ sudo docker run -i -t ubuntu /bin/bash
 
 Let's break down this command. The Docker client is launched using the `docker`
 binary with the `run` option telling it to launch a new container. The bare

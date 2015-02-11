@@ -12,9 +12,8 @@ using a link.
 Firstly, we create a `Dockerfile` for our new Redis
 image.
 
-    FROM        ubuntu:12.10
-    RUN         apt-get update
-    RUN         apt-get -y install redis-server
+    FROM        ubuntu:14.04
+    RUN         apt-get update && apt-get install -y redis-server
     EXPOSE      6379
     ENTRYPOINT  ["/usr/bin/redis-server"]
 
@@ -44,14 +43,14 @@ created with an alias of `db`. This will create a secure tunnel to the
 `redis` container and expose the Redis instance running inside that
 container to only this container.
 
-    $ sudo docker run --link redis:db -i -t ubuntu:12.10 /bin/bash
+    $ sudo docker run --link redis:db -i -t ubuntu:14.04 /bin/bash
 
 Once inside our freshly created container we need to install Redis to
 get the `redis-cli` binary to test our connection.
 
-    $ apt-get update
-    $ apt-get -y install redis-server
-    $ service redis-server stop
+    $ sudo apt-get update
+    $ sudo apt-get install redis-server
+    $ sudo service redis-server stop
 
 As we've used the `--link redis:db` option, Docker
 has created some environment variables in our web application container.

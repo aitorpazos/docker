@@ -10,14 +10,14 @@ This guide assumes you have a working installation of Docker. To check
 your Docker install, run the following command:
 
     # Check that you have a working install
-    $ docker info
+    $ sudo docker info
 
 If you get `docker: command not found` or something like
 `/var/lib/docker/repositories: permission denied` you may have an
 incomplete Docker installation or insufficient privileges to access
 Docker on your machine.
 
-Please refer to [*Installation*](/installation/#installation-list)
+Please refer to [*Installation*](/installation)
 for installation instructions.
 
 ## Download a pre-built image
@@ -26,7 +26,7 @@ for installation instructions.
     $ sudo docker pull ubuntu
 
 This will find the `ubuntu` image by name on
-[*Docker Hub*](/userguide/dockerrepos/#find-public-images-on-docker-hub)
+[*Docker Hub*](/userguide/dockerrepos/#searching-for-images)
 and download it from [Docker Hub](https://hub.docker.com) to a local
 image cache.
 
@@ -37,7 +37,7 @@ image cache.
 > characters of the full image ID - which can be found using
 > `docker inspect` or `docker images --no-trunc=true`
 
-**If you're using OS X** then you shouldn't use `sudo`.
+{{ include "no-remote-sudo.md" }}
 
 ## Running an interactive shell
 
@@ -126,20 +126,20 @@ TCP and a Unix socket
     $ JOB=$(sudo docker run -d ubuntu /bin/sh -c "while true; do echo Hello world; sleep 1; done")
 
     # Stop the container
-    $ docker stop $JOB
+    $ sudo docker stop $JOB
 
     # Start the container
-    $ docker start $JOB
+    $ sudo docker start $JOB
 
     # Restart the container
-    $ docker restart $JOB
+    $ sudo docker restart $JOB
 
     # SIGKILL a container
-    $ docker kill $JOB
+    $ sudo docker kill $JOB
 
     # Remove a container
-    $ docker stop $JOB # Container must be stopped to remove it
-    $ docker rm $JOB
+    $ sudo docker stop $JOB # Container must be stopped to remove it
+    $ sudo docker rm $JOB
 
 ## Bind a service on a TCP port
 
@@ -174,6 +174,6 @@ will be stored (as a diff). See which images you already have using the
 You now have an image state from which you can create new instances.
 
 Read more about [*Share Images via
-Repositories*](/userguide/dockerrepos/#working-with-the-repository) or
+Repositories*](/userguide/dockerrepos) or
 continue to the complete [*Command
-Line*](/reference/commandline/cli/#cli)
+Line*](/reference/commandline/cli)

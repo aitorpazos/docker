@@ -21,7 +21,7 @@ virtual machine and runs the Docker daemon.
 
 ## Installation
 
-1. Download the latest release of the [Docker for Windows Installer](https://github.com/boot2docker/windows-installer/releases)
+1. Download the latest release of the [Docker for Windows Installer](https://github.com/boot2docker/windows-installer/releases/latest)
 2. Run the installer, which will install VirtualBox, MSYS-git, the boot2docker Linux ISO,
 and the Boot2Docker management tool.
    ![](/installation/images/windows-installer.png)
@@ -37,7 +37,7 @@ and the Boot2Docker management tool.
 ## Upgrading
 
 1. Download the latest release of the [Docker for Windows Installer](
-   https://github.com/boot2docker/windows-installer/releases)
+   https://github.com/boot2docker/windows-installer/releases/latest)
 
 2. Run the installer, which will update the Boot2Docker management tool.
 
@@ -49,6 +49,8 @@ and the Boot2Docker management tool.
 
 ## Running Docker
 
+{{ include "no-remote-sudo.md" }}
+
 Boot2Docker will log you in automatically so you can start using Docker right away.
 
 Let's try the `hello-world` example image. Run
@@ -57,6 +59,20 @@ Let's try the `hello-world` example image. Run
 
 This should download the very small `hello-world` image and print a `Hello from Docker.` message.
 
+## Login with PUTTY instead of using the CMD
+
+Boot2Docker generates and uses the public/private key pair in your `%HOMEPATH%\.ssh`
+directory so to log in you need to use the private key from this same directory.
+
+The private key needs to be converted into the format PuTTY uses.
+
+You can do this with
+[puttygen](http://www.chiark.greenend.org.uk/~sgtatham/putty/download.html):
+
+- Open `puttygen.exe` and load ("File"->"Load" menu) the private key from
+  `%HOMEPATH%\.ssh\id_boot2docker`
+- then click: "Save Private Key".
+- Then use the saved file to login with PuTTY using `docker@127.0.0.1:2022`.
 
 # Further Details
 

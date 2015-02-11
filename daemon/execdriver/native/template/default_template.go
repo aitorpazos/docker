@@ -23,14 +23,15 @@ func New() *libcontainer.Config {
 			"NET_BIND_SERVICE",
 			"SYS_CHROOT",
 			"KILL",
+			"AUDIT_WRITE",
 		},
-		Namespaces: map[string]bool{
-			"NEWNS":  true,
-			"NEWUTS": true,
-			"NEWIPC": true,
-			"NEWPID": true,
-			"NEWNET": true,
-		},
+		Namespaces: libcontainer.Namespaces([]libcontainer.Namespace{
+			{Type: "NEWNS"},
+			{Type: "NEWUTS"},
+			{Type: "NEWIPC"},
+			{Type: "NEWPID"},
+			{Type: "NEWNET"},
+		}),
 		Cgroups: &cgroups.Cgroup{
 			Parent:          "docker",
 			AllowAllDevices: false,

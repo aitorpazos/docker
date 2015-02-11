@@ -4,7 +4,7 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/dotcloud/docker/utils"
+	"github.com/docker/docker/utils"
 )
 
 // Test the behavior of TruncIndex, an index for querying IDs from a non-conflicting prefix.
@@ -58,6 +58,11 @@ func TestTruncIndex(t *testing.T) {
 	assertIndexGet(t, index, id[:6], "", true)
 	assertIndexGet(t, index, id[:4], "", true)
 	assertIndexGet(t, index, id[:1], "", true)
+
+	// An ambiguous id prefix should return an error
+	if _, err := index.Get(id[:4]); err == nil || err == nil {
+		t.Fatal("An ambiguous id prefix should return an error")
+	}
 
 	// 7 characters should NOT conflict
 	assertIndexGet(t, index, id[:7], id, false)

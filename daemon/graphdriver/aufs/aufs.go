@@ -30,11 +30,13 @@ import (
 	"sync"
 	"syscall"
 
+	log "github.com/Sirupsen/logrus"
+	"github.com/docker/docker/daemon/graphdriver"
+	"github.com/docker/docker/pkg/archive"
+	"github.com/docker/docker/pkg/chrootarchive"
+	mountpk "github.com/docker/docker/pkg/mount"
+	"github.com/docker/docker/utils"
 	"github.com/docker/libcontainer/label"
-	"github.com/dotcloud/docker/archive"
-	"github.com/dotcloud/docker/daemon/graphdriver"
-	mountpk "github.com/dotcloud/docker/pkg/mount"
-	"github.com/dotcloud/docker/utils"
 )
 
 var (
@@ -43,6 +45,7 @@ var (
 		graphdriver.FsMagicBtrfs,
 		graphdriver.FsMagicAufs,
 	}
+	backingFs = "<unknown>"
 )
 
 func init() {
@@ -58,20 +61,22 @@ type Driver struct {
 // New returns a new AUFS driver.
 // An error is returned if AUFS is not supported.
 func Init(root string, options []string) (graphdriver.Driver, error) {
+
 	// Try to load the aufs kernel module
 	if err := supportsAufs(); err != nil {
 		return nil, graphdriver.ErrNotSupported
 	}
 
-	rootdir := path.Dir(root)
-
-	var buf syscall.Statfs_t
-	if err := syscall.Statfs(rootdir, &buf); err != nil {
-		return nil, fmt.Errorf("Couldn't stat the root directory: %s", err)
+	fsMagic, err := graphdriver.GetFSMagic(root)
+	if err != nil {
+		return nil, err
+	}
+	if fsName, ok := graphdriver.FsNames[fsMagic]; ok {
+		backingFs = fsName
 	}
 
 	for _, magic := range incompatibleFsMagic {
-		if graphdriver.FsMagic(buf.Type) == magic {
+		if fsMagic == magic {
 			return nil, graphdriver.ErrIncompatibleFS
 		}
 	}
@@ -97,7 +102,7 @@ func Init(root string, options []string) (graphdriver.Driver, error) {
 		return nil, err
 	}
 
-	if err := graphdriver.MakePrivate(root); err != nil {
+	if err := mountpk.MakePrivate(root); err != nil {
 		return nil, err
 	}
 
@@ -132,25 +137,26 @@ func supportsAufs() error {
 	return ErrAufsNotSupported
 }
 
-func (a Driver) rootPath() string {
+func (a *Driver) rootPath() string {
 	return a.root
 }
 
-func (Driver) String() string {
+func (*Driver) String() string {
 	return "aufs"
 }
 
-func (a Driver) Status() [][2]string {
+func (a *Driver) Status() [][2]string {
 	ids, _ := loadIds(path.Join(a.rootPath(), "layers"))
 	return [][2]string{
 		{"Root Dir", a.rootPath()},
+		{"Backing Filesystem", backingFs},
 		{"Dirs", fmt.Sprintf("%d", len(ids))},
 	}
 }
 
 // Exists returns true if the given id is registered with
 // this driver
-func (a Driver) Exists(id string) bool {
+func (a *Driver) Exists(id string) bool {
 	if _, err := os.Lstat(path.Join(a.rootPath(), "layers", id)); err != nil {
 		return false
 	}
@@ -209,7 +215,7 @@ func (a *Driver) Remove(id string) error {
 	defer a.Unlock()
 
 	if a.active[id] != 0 {
-		utils.Errorf("Warning: removing active id %s\n", id)
+		log.Errorf("Warning: removing active id %s", id)
 	}
 
 	// Make sure the dir is umounted first
@@ -276,7 +282,7 @@ func (a *Driver) Get(id, mountLabel string) (string, error) {
 	return out, nil
 }
 
-func (a *Driver) Put(id string) {
+func (a *Driver) Put(id string) error {
 	// Protect the a.active from concurrent access
 	a.Lock()
 	defer a.Unlock()
@@ -291,25 +297,48 @@ func (a *Driver) Put(id string) {
 		}
 		delete(a.active, id)
 	}
+	return nil
 }
 
-// Returns an archive of the contents for the id
-func (a *Driver) Diff(id string) (archive.Archive, error) {
+// Diff produces an archive of the changes between the specified
+// layer and its parent layer which may be "".
+func (a *Driver) Diff(id, parent string) (archive.Archive, error) {
+	// AUFS doesn't need the parent layer to produce a diff.
 	return archive.TarWithOptions(path.Join(a.rootPath(), "diff", id), &archive.TarOptions{
-		Compression: archive.Uncompressed,
+		Compression:     archive.Uncompressed,
+		ExcludePatterns: []string{".wh..wh.*"},
 	})
 }
 
-func (a *Driver) ApplyDiff(id string, diff archive.ArchiveReader) error {
-	return archive.Untar(diff, path.Join(a.rootPath(), "diff", id), nil)
+func (a *Driver) applyDiff(id string, diff archive.ArchiveReader) error {
+	return chrootarchive.Untar(diff, path.Join(a.rootPath(), "diff", id), nil)
 }
 
-// Returns the size of the contents for the id
-func (a *Driver) DiffSize(id string) (int64, error) {
+// DiffSize calculates the changes between the specified id
+// and its parent and returns the size in bytes of the changes
+// relative to its base filesystem directory.
+func (a *Driver) DiffSize(id, parent string) (size int64, err error) {
+	// AUFS doesn't need the parent layer to calculate the diff size.
 	return utils.TreeSize(path.Join(a.rootPath(), "diff", id))
 }
 
-func (a *Driver) Changes(id string) ([]archive.Change, error) {
+// ApplyDiff extracts the changeset from the given diff into the
+// layer with the specified id and parent, returning the size of the
+// new layer in bytes.
+func (a *Driver) ApplyDiff(id, parent string, diff archive.ArchiveReader) (size int64, err error) {
+	// AUFS doesn't need the parent id to apply the diff.
+	if err = a.applyDiff(id, diff); err != nil {
+		return
+	}
+
+	return a.DiffSize(id, parent)
+}
+
+// Changes produces a list of changes between the specified layer
+// and its parent layer. If parent is "", then all changes will be ADD changes.
+func (a *Driver) Changes(id, parent string) ([]archive.Change, error) {
+	// AUFS doesn't have snapshots, so we need to get changes from all parent
+	// layers.
 	layers, err := a.getParentLayerPaths(id)
 	if err != nil {
 		return nil, err
@@ -321,9 +350,6 @@ func (a *Driver) getParentLayerPaths(id string) ([]string, error) {
 	parentIds, err := getParentIds(a.rootPath(), id)
 	if err != nil {
 		return nil, err
-	}
-	if len(parentIds) == 0 {
-		return nil, fmt.Errorf("Dir %s does not have any parent layers", id)
 	}
 	layers := make([]string, len(parentIds))
 
@@ -378,7 +404,7 @@ func (a *Driver) Cleanup() error {
 
 	for _, id := range ids {
 		if err := a.unmount(id); err != nil {
-			utils.Errorf("Unmounting %s: %s", utils.TruncateID(id), err)
+			log.Errorf("Unmounting %s: %s", utils.TruncateID(id), err)
 		}
 	}
 
@@ -392,39 +418,44 @@ func (a *Driver) aufsMount(ro []string, rw, target, mountLabel string) (err erro
 		}
 	}()
 
-	if err = a.tryMount(ro, rw, target, mountLabel); err != nil {
-		if err = a.mountRw(rw, target, mountLabel); err != nil {
-			return
-		}
+	// Mount options are clipped to page size(4096 bytes). If there are more
+	// layers then these are remounted individually using append.
 
-		for _, layer := range ro {
-			data := label.FormatMountLabel(fmt.Sprintf("append:%s=ro+wh", layer), mountLabel)
-			if err = mount("none", target, "aufs", MsRemount, data); err != nil {
-				return
+	b := make([]byte, syscall.Getpagesize()-len(mountLabel)-54) // room for xino & mountLabel
+	bp := copy(b, fmt.Sprintf("br:%s=rw", rw))
+
+	firstMount := true
+	i := 0
+
+	for {
+		for ; i < len(ro); i++ {
+			layer := fmt.Sprintf(":%s=ro+wh", ro[i])
+
+			if firstMount {
+				if bp+len(layer) > len(b) {
+					break
+				}
+				bp += copy(b[bp:], layer)
+			} else {
+				data := label.FormatMountLabel(fmt.Sprintf("append%s", layer), mountLabel)
+				if err = mount("none", target, "aufs", MsRemount, data); err != nil {
+					return
+				}
 			}
 		}
+
+		if firstMount {
+			data := label.FormatMountLabel(fmt.Sprintf("%s,dio,xino=/dev/shm/aufs.xino", string(b[:bp])), mountLabel)
+			if err = mount("none", target, "aufs", 0, data); err != nil {
+				return
+			}
+			firstMount = false
+		}
+
+		if i == len(ro) {
+			break
+		}
 	}
+
 	return
-}
-
-// Try to mount using the aufs fast path, if this fails then
-// append ro layers.
-func (a *Driver) tryMount(ro []string, rw, target, mountLabel string) (err error) {
-	var (
-		rwBranch   = fmt.Sprintf("%s=rw", rw)
-		roBranches = fmt.Sprintf("%s=ro+wh:", strings.Join(ro, "=ro+wh:"))
-		data       = label.FormatMountLabel(fmt.Sprintf("br:%v:%v,xino=/dev/shm/aufs.xino", rwBranch, roBranches), mountLabel)
-	)
-	return mount("none", target, "aufs", 0, data)
-}
-
-func (a *Driver) mountRw(rw, target, mountLabel string) error {
-	data := label.FormatMountLabel(fmt.Sprintf("br:%s,xino=/dev/shm/aufs.xino", rw), mountLabel)
-	return mount("none", target, "aufs", 0, data)
-}
-
-func rollbackMount(target string, err error) {
-	if err != nil {
-		Unmount(target)
-	}
 }

@@ -67,14 +67,14 @@ func OpenAndDup(consolePath string) error {
 // Unlockpt unlocks the slave pseudoterminal device corresponding to the master pseudoterminal referred to by f.
 // Unlockpt should be called before opening the slave side of a pseudoterminal.
 func Unlockpt(f *os.File) error {
-	var u int
+	var u int32
 
 	return Ioctl(f.Fd(), syscall.TIOCSPTLCK, uintptr(unsafe.Pointer(&u)))
 }
 
 // Ptsname retrieves the name of the first available pts for the given master.
 func Ptsname(f *os.File) (string, error) {
-	var n int
+	var n int32
 
 	if err := Ioctl(f.Fd(), syscall.TIOCGPTN, uintptr(unsafe.Pointer(&n))); err != nil {
 		return "", err
@@ -114,7 +114,7 @@ func OpenPtmx() (*os.File, error) {
 func OpenTerminal(name string, flag int) (*os.File, error) {
 	r, e := syscall.Open(name, flag, 0)
 	if e != nil {
-		return nil, &os.PathError{"open", name, e}
+		return nil, &os.PathError{Op: "open", Path: name, Err: e}
 	}
 	return os.NewFile(uintptr(r), name), nil
 }

@@ -3,16 +3,21 @@ package image
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/dotcloud/docker/archive"
-	"github.com/dotcloud/docker/daemon/graphdriver"
-	"github.com/dotcloud/docker/runconfig"
-	"github.com/dotcloud/docker/utils"
 	"io/ioutil"
 	"os"
 	"path"
 	"strconv"
 	"time"
+
+	"github.com/docker/docker/pkg/archive"
+	"github.com/docker/docker/runconfig"
+	"github.com/docker/docker/utils"
 )
+
+// Set the max depth to the aufs default that most
+// kernels are compiled with
+// For more information see: http://sourceforge.net/p/aufs/aufs3-standalone/ci/aufs3.12/tree/config.mk
+const MaxImageDepth = 127
 
 type Image struct {
 	ID              string            `json:"id"`
@@ -32,14 +37,18 @@ type Image struct {
 }
 
 func LoadImage(root string) (*Image, error) {
-	// Load the json data
-	jsonData, err := ioutil.ReadFile(jsonPath(root))
+	// Open the JSON file to decode by streaming
+	jsonSource, err := os.Open(jsonPath(root))
 	if err != nil {
 		return nil, err
 	}
-	img := &Image{}
+	defer jsonSource.Close()
 
-	if err := json.Unmarshal(jsonData, img); err != nil {
+	img := &Image{}
+	dec := json.NewDecoder(jsonSource)
+
+	// Decode the JSON data
+	if err := dec.Decode(img); err != nil {
 		return nil, err
 	}
 	if err := utils.ValidateID(img.ID); err != nil {
@@ -54,7 +63,10 @@ func LoadImage(root string) (*Image, error) {
 		// because a layer size of 0 (zero) is valid
 		img.Size = -1
 	} else {
-		size, err := strconv.Atoi(string(buf))
+		// Using Atoi here instead would temporarily convert the size to a machine
+		// dependent integer type, which causes images larger than 2^31 bytes to
+		// display negative sizes on 32-bit machines:
+		size, err := strconv.ParseInt(string(buf), 10, 64)
 		if err != nil {
 			return nil, err
 		}
@@ -64,73 +76,29 @@ func LoadImage(root string) (*Image, error) {
 	return img, nil
 }
 
-func StoreImage(img *Image, jsonData []byte, layerData archive.ArchiveReader, root, layer string) error {
-	// Store the layer
-	var (
-		size   int64
-		err    error
-		driver = img.graph.Driver()
-	)
-	if err := os.MkdirAll(layer, 0755); err != nil {
-		return err
-	}
-
-	// If layerData is not nil, unpack it into the new layer
+// StoreImage stores file system layer data for the given image to the
+// image's registered storage driver. Image metadata is stored in a file
+// at the specified root directory.
+func StoreImage(img *Image, layerData archive.ArchiveReader, root string) (err error) {
+	// Store the layer. If layerData is not nil, unpack it into the new layer
 	if layerData != nil {
-		if differ, ok := driver.(graphdriver.Differ); ok {
-			if err := differ.ApplyDiff(img.ID, layerData); err != nil {
-				return err
-			}
-
-			if size, err = differ.DiffSize(img.ID); err != nil {
-				return err
-			}
-		} else {
-			start := time.Now().UTC()
-			utils.Debugf("Start untar layer")
-			if err := archive.ApplyLayer(layer, layerData); err != nil {
-				return err
-			}
-			utils.Debugf("Untar time: %vs", time.Now().UTC().Sub(start).Seconds())
-
-			if img.Parent == "" {
-				if size, err = utils.TreeSize(layer); err != nil {
-					return err
-				}
-			} else {
-				parent, err := driver.Get(img.Parent, "")
-				if err != nil {
-					return err
-				}
-				defer driver.Put(img.Parent)
-				changes, err := archive.ChangesDirs(layer, parent)
-				if err != nil {
-					return err
-				}
-				size = archive.ChangesSize(layer, changes)
-			}
+		if img.Size, err = img.graph.Driver().ApplyDiff(img.ID, img.Parent, layerData); err != nil {
+			return err
 		}
 	}
 
-	img.Size = size
 	if err := img.SaveSize(root); err != nil {
 		return err
 	}
 
-	// If raw json is provided, then use it
-	if jsonData != nil {
-		if err := ioutil.WriteFile(jsonPath(root), jsonData, 0600); err != nil {
-			return err
-		}
-	} else {
-		if jsonData, err = json.Marshal(img); err != nil {
-			return err
-		}
-		if err := ioutil.WriteFile(jsonPath(root), jsonData, 0600); err != nil {
-			return err
-		}
+	f, err := os.OpenFile(jsonPath(root), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(0600))
+	if err != nil {
+		return err
 	}
-	return nil
+
+	defer f.Close()
+
+	return json.NewEncoder(f).Encode(img)
 }
 
 func (img *Image) SetGraph(graph Graph) {
@@ -143,6 +111,24 @@ func (img *Image) SaveSize(root string) error {
 		return fmt.Errorf("Error storing image size in %s/layersize: %s", root, err)
 	}
 	return nil
+}
+
+func (img *Image) SaveCheckSum(root, checksum string) error {
+	if err := ioutil.WriteFile(path.Join(root, "checksum"), []byte(checksum), 0600); err != nil {
+		return fmt.Errorf("Error storing checksum in %s/checksum: %s", root, err)
+	}
+	return nil
+}
+
+func (img *Image) GetCheckSum(root string) (string, error) {
+	cs, err := ioutil.ReadFile(path.Join(root, "checksum"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	return string(cs), err
 }
 
 func jsonPath(root string) string {
@@ -170,52 +156,10 @@ func (img *Image) TarLayer() (arch archive.Archive, err error) {
 	if img.graph == nil {
 		return nil, fmt.Errorf("Can't load storage driver for unregistered image %s", img.ID)
 	}
+
 	driver := img.graph.Driver()
-	if differ, ok := driver.(graphdriver.Differ); ok {
-		return differ.Diff(img.ID)
-	}
 
-	imgFs, err := driver.Get(img.ID, "")
-	if err != nil {
-		return nil, err
-	}
-
-	defer func() {
-		if err != nil {
-			driver.Put(img.ID)
-		}
-	}()
-
-	if img.Parent == "" {
-		archive, err := archive.Tar(imgFs, archive.Uncompressed)
-		if err != nil {
-			return nil, err
-		}
-		return utils.NewReadCloserWrapper(archive, func() error {
-			err := archive.Close()
-			driver.Put(img.ID)
-			return err
-		}), nil
-	}
-
-	parentFs, err := driver.Get(img.Parent, "")
-	if err != nil {
-		return nil, err
-	}
-	defer driver.Put(img.Parent)
-	changes, err := archive.ChangesDirs(imgFs, parentFs)
-	if err != nil {
-		return nil, err
-	}
-	archive, err := archive.ExportChanges(imgFs, changes)
-	if err != nil {
-		return nil, err
-	}
-	return utils.NewReadCloserWrapper(archive, func() error {
-		err := archive.Close()
-		driver.Put(img.ID)
-		return err
-	}), nil
+	return driver.Diff(img.ID, img.Parent)
 }
 
 // Image includes convenience proxy functions to its graph
@@ -295,11 +239,26 @@ func (img *Image) Depth() (int, error) {
 	return count, nil
 }
 
+// CheckDepth returns an error if the depth of an image, as returned
+// by ImageDepth, is too large to support creating a container from it
+// on this daemon.
+func (img *Image) CheckDepth() error {
+	// We add 2 layers to the depth because the container's rw and
+	// init layer add to the restriction
+	depth, err := img.Depth()
+	if err != nil {
+		return err
+	}
+	if depth+2 >= MaxImageDepth {
+		return fmt.Errorf("Cannot create container with more than %d parents", MaxImageDepth)
+	}
+	return nil
+}
+
 // Build an Image object from raw json data
 func NewImgJSON(src []byte) (*Image, error) {
 	ret := &Image{}
 
-	utils.Debugf("Json string: {%s}", src)
 	// FIXME: Is there a cleaner way to "purify" the input json?
 	if err := json.Unmarshal(src, ret); err != nil {
 		return nil, err

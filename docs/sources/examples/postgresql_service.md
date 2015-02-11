@@ -6,7 +6,7 @@ page_keywords: docker, example, package installation, postgresql
 
 > **Note**: 
 > - **If you don't like sudo** then see [*Giving non-root
->   access*](/installation/binaries/#dockergroup)
+>   access*](/installation/binaries/#giving-non-root-access)
 
 ## Installing PostgreSQL on Docker
 
@@ -35,17 +35,13 @@ Start by creating a new `Dockerfile`:
     #     of PostgreSQL, ``9.3``.
     RUN echo "deb http://apt.postgresql.org/pub/repos/apt/ precise-pgdg main" > /etc/apt/sources.list.d/pgdg.list
 
-    # Update the Ubuntu and PostgreSQL repository indexes
-    RUN apt-get update
-
     # Install ``python-software-properties``, ``software-properties-common`` and PostgreSQL 9.3
     #  There are some warnings (in red) that show up during the build. You can hide
     #  them by prefixing each apt-get statement with DEBIAN_FRONTEND=noninteractive
-    RUN apt-get -y -q install python-software-properties software-properties-common
-    RUN apt-get -y -q install postgresql-9.3 postgresql-client-9.3 postgresql-contrib-9.3
+    RUN apt-get update && apt-get install -y python-software-properties software-properties-common postgresql-9.3 postgresql-client-9.3 postgresql-contrib-9.3
 
     # Note: The official Debian and Ubuntu images automatically ``apt-get clean``
-    # after each ``apt-get`` 
+    # after each ``apt-get``
 
     # Run the rest of the commands as the ``postgres`` user created by the ``postgres-9.3`` package when it was ``apt-get installed``
     USER postgres
@@ -88,7 +84,7 @@ Containers*](/userguide/dockerlinks), or we can access it from our host
 
 > **Note**: 
 > The `--rm` removes the container and its image when
-> the container exists successfully.
+> the container exits successfully.
 
 ### Using container linking
 
@@ -108,7 +104,7 @@ host-mapped port to test as well. You need to use `docker ps`
 to find out what local host port the container is mapped to
 first:
 
-    $ docker ps
+    $ sudo docker ps
     CONTAINER ID        IMAGE                  COMMAND                CREATED             STATUS              PORTS                                      NAMES
     5e24362f27f6        eg_postgresql:latest   /usr/lib/postgresql/   About an hour ago   Up About an hour    0.0.0.0:49153->5432/tcp                    pg_test
     $ psql -h localhost -p 49153 -d docker -U docker --password
@@ -139,7 +135,7 @@ prompt, you can create a table and populate it.
 You can use the defined volumes to inspect the PostgreSQL log files and
 to backup your configuration and data:
 
-    $ docker run --rm --volumes-from pg_test -t -i busybox sh
+    $ sudo docker run --rm --volumes-from pg_test -t -i busybox sh
 
     / # ls
     bin      etc      lib      linuxrc  mnt      proc     run      sys      usr

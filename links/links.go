@@ -2,8 +2,8 @@ package links
 
 import (
 	"fmt"
-	"github.com/dotcloud/docker/engine"
-	"github.com/dotcloud/docker/nat"
+	"github.com/docker/docker/engine"
+	"github.com/docker/docker/nat"
 	"path"
 	"strings"
 )
@@ -47,6 +47,20 @@ func (l *Link) Alias() string {
 	return alias
 }
 
+func nextContiguous(ports []nat.Port, value int, index int) int {
+	if index+1 == len(ports) {
+		return index
+	}
+	for i := index + 1; i < len(ports); i++ {
+		if ports[i].Int() > value+1 {
+			return i - 1
+		}
+
+		value++
+	}
+	return len(ports) - 1
+}
+
 func (l *Link) ToEnv() []string {
 	env := []string{}
 	alias := strings.Replace(strings.ToUpper(l.Alias()), "-", "_", -1)
@@ -55,7 +69,32 @@ func (l *Link) ToEnv() []string {
 		env = append(env, fmt.Sprintf("%s_PORT=%s://%s:%s", alias, p.Proto(), l.ChildIP, p.Port()))
 	}
 
-	// Load exposed ports into the environment
+	//sort the ports so that we can bulk the continuous ports together
+	nat.Sort(l.Ports, func(ip, jp nat.Port) bool {
+		// If the two ports have the same number, tcp takes priority
+		// Sort in desc order
+		return ip.Int() < jp.Int() || (ip.Int() == jp.Int() && strings.ToLower(ip.Proto()) == "tcp")
+	})
+
+	for i := 0; i < len(l.Ports); {
+		p := l.Ports[i]
+		j := nextContiguous(l.Ports, p.Int(), i)
+		if j > i+1 {
+			env = append(env, fmt.Sprintf("%s_PORT_%s_%s_START=%s://%s:%s", alias, p.Port(), strings.ToUpper(p.Proto()), p.Proto(), l.ChildIP, p.Port()))
+			env = append(env, fmt.Sprintf("%s_PORT_%s_%s_ADDR=%s", alias, p.Port(), strings.ToUpper(p.Proto()), l.ChildIP))
+			env = append(env, fmt.Sprintf("%s_PORT_%s_%s_PROTO=%s", alias, p.Port(), strings.ToUpper(p.Proto()), p.Proto()))
+			env = append(env, fmt.Sprintf("%s_PORT_%s_%s_PORT_START=%s", alias, p.Port(), strings.ToUpper(p.Proto()), p.Port()))
+
+			q := l.Ports[j]
+			env = append(env, fmt.Sprintf("%s_PORT_%s_%s_END=%s://%s:%s", alias, p.Port(), strings.ToUpper(q.Proto()), q.Proto(), l.ChildIP, q.Port()))
+			env = append(env, fmt.Sprintf("%s_PORT_%s_%s_PORT_END=%s", alias, p.Port(), strings.ToUpper(q.Proto()), q.Port()))
+
+			i = j + 1
+			continue
+		} else {
+			i++
+		}
+	}
 	for _, p := range l.Ports {
 		env = append(env, fmt.Sprintf("%s_PORT_%s_%s=%s://%s:%s", alias, p.Port(), strings.ToUpper(p.Proto()), p.Proto(), l.ChildIP, p.Port()))
 		env = append(env, fmt.Sprintf("%s_PORT_%s_%s_ADDR=%s", alias, p.Port(), strings.ToUpper(p.Proto()), l.ChildIP))
@@ -101,7 +140,8 @@ func (l *Link) getDefaultPort() *nat.Port {
 }
 
 func (l *Link) Enable() error {
-	if err := l.toggle("-I", false); err != nil {
+	// -A == iptables append flag
+	if err := l.toggle("-A", false); err != nil {
 		return err
 	}
 	l.IsEnabled = true
@@ -111,6 +151,7 @@ func (l *Link) Enable() error {
 func (l *Link) Disable() {
 	// We do not care about errors here because the link may not
 	// exist in iptables
+	// -D == iptables delete flag
 	l.toggle("-D", true)
 
 	l.IsEnabled = false
@@ -125,7 +166,7 @@ func (l *Link) toggle(action string, ignoreErrors bool) error {
 
 	out := make([]string, len(l.Ports))
 	for i, p := range l.Ports {
-		out[i] = fmt.Sprintf("%s/%s", p.Port(), p.Proto())
+		out[i] = string(p)
 	}
 	job.SetenvList("Ports", out)
 

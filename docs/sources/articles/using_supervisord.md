@@ -6,7 +6,7 @@ page_keywords: docker, supervisor, process management
 
 > **Note**:
 > - **If you don't like sudo** then see [*Giving non-root
->   access*](/installation/binaries/#dockergroup)
+>   access*](/installation/binaries/#giving-non-root-access)
 
 Traditionally a Docker container runs a single process when it is
 launched, for example an Apache daemon or a SSH server daemon. Often
@@ -28,22 +28,18 @@ new image.
 
     FROM ubuntu:13.04
     MAINTAINER examples@docker.com
-    RUN echo "deb http://archive.ubuntu.com/ubuntu precise main universe" > /etc/apt/sources.list
-    RUN apt-get update
-    RUN apt-get upgrade -y
 
 ## Installing Supervisor
 
 We can now install our SSH and Apache daemons as well as Supervisor in
 our container.
 
-    RUN apt-get install -y openssh-server apache2 supervisor
-    RUN mkdir -p /var/run/sshd
-    RUN mkdir -p /var/log/supervisor
+    RUN apt-get update && apt-get install -y openssh-server apache2 supervisor
+    RUN mkdir -p /var/lock/apache2 /var/run/apache2 /var/run/sshd /var/log/supervisor
 
 Here we're installing the `openssh-server`,
 `apache2` and `supervisor`
-(which provides the Supervisor daemon) packages. We're also creating two
+(which provides the Supervisor daemon) packages. We're also creating four
 new directories that are needed to run our SSH daemon and Supervisor.
 
 ## Adding Supervisor's configuration file

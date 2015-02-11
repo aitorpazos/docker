@@ -2,11 +2,12 @@ package execdrivers
 
 import (
 	"fmt"
-	"github.com/dotcloud/docker/daemon/execdriver"
-	"github.com/dotcloud/docker/daemon/execdriver/lxc"
-	"github.com/dotcloud/docker/daemon/execdriver/native"
-	"github.com/dotcloud/docker/pkg/sysinfo"
 	"path"
+
+	"github.com/docker/docker/daemon/execdriver"
+	"github.com/docker/docker/daemon/execdriver/lxc"
+	"github.com/docker/docker/daemon/execdriver/native"
+	"github.com/docker/docker/pkg/sysinfo"
 )
 
 func NewDriver(name, root, initPath string, sysInfo *sysinfo.SysInfo) (execdriver.Driver, error) {

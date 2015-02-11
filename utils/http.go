@@ -4,6 +4,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	log "github.com/Sirupsen/logrus"
 )
 
 // VersionInfo is used to model entities which has a version.
@@ -132,6 +134,10 @@ func (self *HTTPRequestFactory) AddDecorator(d ...HTTPRequestDecorator) {
 	self.decorators = append(self.decorators, d...)
 }
 
+func (self *HTTPRequestFactory) GetDecorators() []HTTPRequestDecorator {
+	return self.decorators
+}
+
 // NewRequest() creates a new *http.Request,
 // applies all decorators in the HTTPRequestFactory on the request,
 // then applies decorators provided by d on the request.
@@ -157,6 +163,6 @@ func (h *HTTPRequestFactory) NewRequest(method, urlStr string, body io.Reader, d
 			return nil, err
 		}
 	}
-	Debugf("%v -- HEADERS: %v", req.URL, req.Header)
+	log.Debugf("%v -- HEADERS: %v", req.URL, req.Header)
 	return req, err
 }

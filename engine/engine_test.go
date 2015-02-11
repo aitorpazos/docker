@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/docker/docker/pkg/ioutils"
 )
 
 func TestRegister(t *testing.T) {
@@ -61,6 +63,17 @@ func TestJob(t *testing.T) {
 	}
 }
 
+func TestEngineShutdown(t *testing.T) {
+	eng := New()
+	if eng.IsShutdown() {
+		t.Fatalf("Engine should not show as shutdown")
+	}
+	eng.Shutdown()
+	if !eng.IsShutdown() {
+		t.Fatalf("Engine should show as shutdown")
+	}
+}
+
 func TestEngineCommands(t *testing.T) {
 	eng := New()
 	handler := func(job *Job) Status { return StatusOK }
@@ -85,16 +98,6 @@ func TestEngineString(t *testing.T) {
 	s2 := eng2.String()
 	if eng1 == eng2 {
 		t.Fatalf("Different engines should have different names (%v == %v)", s1, s2)
-	}
-}
-
-func TestEngineLogf(t *testing.T) {
-	eng := New()
-	input := "Test log line"
-	if n, err := eng.Logf("%s\n", input); err != nil {
-		t.Fatal(err)
-	} else if n < len(input) {
-		t.Fatalf("Test: Logf() should print at least as much as the input\ninput=%d\nprinted=%d", len(input), n)
 	}
 }
 
@@ -147,5 +150,87 @@ func TestCatchallEmptyName(t *testing.T) {
 	}
 	if called {
 		t.Fatalf("Engine.Job(\"\").Run() should return an error")
+	}
+}
+
+// Ensure that a job within a job both using the same underlying standard
+// output writer does not close the output of the outer job when the inner
+// job's stdout is wrapped with a NopCloser. When not wrapped, it should
+// close the outer job's output.
+func TestNestedJobSharedOutput(t *testing.T) {
+	var (
+		outerHandler Handler
+		innerHandler Handler
+		wrapOutput   bool
+	)
+
+	outerHandler = func(job *Job) Status {
+		job.Stdout.Write([]byte("outer1"))
+
+		innerJob := job.Eng.Job("innerJob")
+
+		if wrapOutput {
+			innerJob.Stdout.Add(ioutils.NopWriteCloser(job.Stdout))
+		} else {
+			innerJob.Stdout.Add(job.Stdout)
+		}
+
+		if err := innerJob.Run(); err != nil {
+			t.Fatal(err)
+		}
+
+		// If wrapOutput was *false* this write will do nothing.
+		// FIXME (jlhawn): It should cause an error to write to
+		// closed output.
+		job.Stdout.Write([]byte(" outer2"))
+
+		return StatusOK
+	}
+
+	innerHandler = func(job *Job) Status {
+		job.Stdout.Write([]byte(" inner"))
+
+		return StatusOK
+	}
+
+	eng := New()
+	eng.Register("outerJob", outerHandler)
+	eng.Register("innerJob", innerHandler)
+
+	// wrapOutput starts *false* so the expected
+	// output of running the outer job will be:
+	//
+	//     "outer1 inner"
+	//
+	outBuf := new(bytes.Buffer)
+	outerJob := eng.Job("outerJob")
+	outerJob.Stdout.Add(outBuf)
+
+	if err := outerJob.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	expectedOutput := "outer1 inner"
+	if outBuf.String() != expectedOutput {
+		t.Fatalf("expected job output to be %q, got %q", expectedOutput, outBuf.String())
+	}
+
+	// Set wrapOutput to true so that the expected
+	// output of running the outer job will be:
+	//
+	//     "outer1 inner outer2"
+	//
+	wrapOutput = true
+	outBuf.Reset()
+	outerJob = eng.Job("outerJob")
+	outerJob.Stdout.Add(outBuf)
+
+	if err := outerJob.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	expectedOutput = "outer1 inner outer2"
+	if outBuf.String() != expectedOutput {
+		t.Fatalf("expected job output to be %q, got %q", expectedOutput, outBuf.String())
 	}
 }

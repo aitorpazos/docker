@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/dotcloud/docker/pkg/testutils"
+	"github.com/docker/docker/pkg/testutils"
 )
 
 func TestEnvLenZero(t *testing.T) {
@@ -33,6 +33,18 @@ func TestEnvLenDup(t *testing.T) {
 	// len(env) != env.Len()
 	if env.Len() != 2 {
 		t.Fatalf("%d", env.Len())
+	}
+}
+
+func TestEnvGetDup(t *testing.T) {
+	env := &Env{
+		"foo=bar",
+		"foo=baz",
+		"foo=bif",
+	}
+	expected := "bif"
+	if v := env.Get("foo"); v != expected {
+		t.Fatalf("expect %q, got %q", expected, v)
 	}
 }
 

@@ -6,7 +6,7 @@ page_keywords: docker, example, package installation, node, centos
 
 > **Note**: 
 > - **If you don't like sudo** then see [*Giving non-root
->   access*](/installation/binaries/#dockergroup)
+>   access*](/installation/binaries/#giving-non-root-access)
 
 The goal of this example is to show you how you can build your own
 Docker images from a parent image using a `Dockerfile`
@@ -59,17 +59,13 @@ Create an empty file called `Dockerfile`:
     touch Dockerfile
 
 Open the `Dockerfile` in your favorite text editor
-and add the following line that defines the version of Docker the image
-requires to build (this example uses Docker 0.3.4):
 
-    # DOCKER-VERSION 0.3.4
-
-Next, define the parent image you want to use to build your own image on
+Define the parent image you want to use to build your own image on
 top of. Here, we'll use
-[CentOS](https://registry.hub.docker.com/_/centos/) (tag: `6.4`)
+[CentOS](https://registry.hub.docker.com/_/centos/) (tag: `centos6`)
 available on the [Docker Hub](https://hub.docker.com/):
 
-    FROM    centos:6.4
+    FROM    centos:centos6
 
 Since we're building a Node.js app, you'll have to install Node.js as
 well as npm on your CentOS image. Node.js is required to run your app
@@ -108,8 +104,7 @@ defines your runtime, i.e. `node`, and the path to our app, i.e. `src/index.js`
 
 Your `Dockerfile` should now look like this:
 
-    # DOCKER-VERSION 0.3.4
-    FROM    centos:6.4
+    FROM    centos:centos6
 
     # Enable EPEL for Node.js
     RUN     rpm -Uvh http://download.fedoraproject.org/pub/epel/6/i386/epel-release-6-8.noarch.rpm
@@ -137,9 +132,9 @@ Your image will now be listed by Docker:
     $ sudo docker images
 
     # Example
-    REPOSITORY                            TAG       ID              CREATED
-    centos                                6.4       539c0211cd76    8 weeks ago
-    <your username>/centos-node-hello     latest    d64d3505b0d2    2 hours ago
+    REPOSITORY                          TAG        ID              CREATED
+    centos                              centos6    539c0211cd76    8 weeks ago
+    <your username>/centos-node-hello   latest     d64d3505b0d2    2 hours ago
 
 ## Run the image
 
@@ -186,7 +181,11 @@ Now you can call your app using `curl` (install if needed via:
 
     Hello world
 
+If you use Boot2docker on OS X, the port is actually mapped to the Docker host VM,
+and you should use the following command:
+
+    $ curl $(boot2docker ip):49160
+
 We hope this tutorial helped you get up and running with Node.js and
 CentOS on Docker. You can get the full source code at
-[https://github.com/gasi/docker-node-hello](https://github.com/gasi/docker-node-hello).
-
+[https://github.com/enokd/docker-node-hello/](https://github.com/enokd/docker-node-hello/).

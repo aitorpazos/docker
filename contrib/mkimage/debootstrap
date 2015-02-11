@@ -15,9 +15,12 @@ done
 suite="$1"
 shift
 
+# allow for DEBOOTSTRAP=qemu-debootstrap ./mkimage.sh ...
+: ${DEBOOTSTRAP:=debootstrap}
+
 (
 	set -x
-	debootstrap "${before[@]}" "$suite" "$rootfsDir" "$@"
+	$DEBOOTSTRAP "${before[@]}" "$suite" "$rootfsDir" "$@"
 )
 
 # now for some Docker-specific tweaks
@@ -45,6 +48,11 @@ chmod +x "$rootfsDir/usr/sbin/policy-rc.d"
 
 # shrink a little, since apt makes us cache-fat (wheezy: ~157.5MB vs ~120MB)
 ( set -x; chroot "$rootfsDir" apt-get clean )
+
+# this file is one APT creates to make sure we don't "autoremove" our currently
+# in-use kernel, which doesn't really apply to debootstraps/Docker images that
+# don't even have kernels installed
+rm -f "$rootfsDir/etc/apt/apt.conf.d/01autoremove-kernels"
 
 # Ubuntu 10.04 sucks... :)
 if strings "$rootfsDir/usr/bin/dpkg" | grep -q unsafe-io; then
@@ -83,7 +91,7 @@ if [ -d "$rootfsDir/etc/apt/apt.conf.d" ]; then
 		Dir::Cache::srcpkgcache "";
 
 		# Note that we do realize this isn't the ideal way to do this, and are always
-		# open to better suggestions (https://github.com/dotcloud/docker/issues).
+		# open to better suggestions (https://github.com/docker/docker/issues).
 	EOF
 
 	# remove apt-cache translations for fast "apt-get update"
@@ -188,4 +196,6 @@ fi
 	# delete all the apt list files since they're big and get stale quickly
 	rm -rf "$rootfsDir/var/lib/apt/lists"/*
 	# this forces "apt-get update" in dependent images, which is also good
+	
+	mkdir "$rootfsDir/var/lib/apt/lists/partial" # Lucid... "E: Lists directory /var/lib/apt/lists/partial is missing."
 )

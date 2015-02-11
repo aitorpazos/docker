@@ -4,9 +4,14 @@ page_keywords: API, Docker, rcli, REST, documentation
 
 # Docker Remote API
 
- - The Remote API is replacing `rcli`.
  - By default the Docker daemon listens on `unix:///var/run/docker.sock`
    and the client must have `root` access to interact with the daemon.
+ - If the Docker daemon is set to use an encrypted TCP socket (`--tls`,
+   or `--tlsverify`) as with Boot2Docker 1.3.0, then you need to add extra
+   parameters to `curl` or `wget` when making test API requests:
+   `curl --insecure --cert ~/.docker/cert.pem --key ~/.docker/key.pem https://boot2docker:2376/images/json`
+   or 
+   `wget --no-check-certificate --certificate=$DOCKER_CERT_PATH/cert.pem --private-key=$DOCKER_CERT_PATH/key.pem https://boot2docker:2376/images/json -O - -q`
  - If a group named `docker` exists on your system, docker will apply
    ownership of the socket to the group.
  - The API tends to be REST, but for some complex commands, like attach
@@ -15,16 +20,111 @@ page_keywords: API, Docker, rcli, REST, documentation
  - Since API version 1.2, the auth configuration is now handled client
    side, so the client has to send the `authConfig` as a `POST` in `/images/(name)/push`.
  - authConfig, set as the `X-Registry-Auth` header, is currently a Base64
-   encoded (JSON) string with credentials:
-   `{'username': string, 'password': string, 'email': string, 'serveraddress' : string}`
+   encoded (JSON) string with the following structure:
+   `{"username": "string", "password": "string", "email": "string",
+   "serveraddress" : "string", "auth": ""}`. Notice that `auth` is to be left
+   empty, `serveraddress` is a domain/ip without protocol, and that double
+   quotes (instead of single ones) are required.
+ - The Remote API uses an open schema model.  In this model, unknown 
+   properties in incoming messages will be ignored.
+   Client applications need to take this into account to ensure
+   they will not break when talking to newer Docker daemons.
 
-The current version of the API is v1.14
+The current version of the API is v1.18
 
-Calling `/images/<name>/insert` is the same as calling
-`/v1.14/images/<name>/insert`.
+Calling `/info` is the same as calling
+`/v1.18/info`.
 
 You can still call an old version of the API using
-`/v1.13/images/<name>/insert`.
+`/v1.17/info`.
+
+## v1.18
+
+### Full Documentation
+
+[*Docker Remote API v1.18*](/reference/api/docker_remote_api_v1.18/)
+
+### What's new
+
+## v1.17
+
+### Full Documentation
+
+[*Docker Remote API v1.17*](/reference/api/docker_remote_api_v1.17/)
+
+### What's new
+
+`POST /containers/(id)/attach` and `POST /exec/(id)/start`
+
+**New!**
+Docker client now hints potential proxies about connection hijacking using HTTP Upgrade headers.
+
+`GET /containers/(id)/json`
+
+**New!**
+This endpoint now returns the list current execs associated with the container (`ExecIDs`).
+
+`POST /containers/(id)/rename`
+
+**New!**
+New endpoint to rename a container `id` to a new name.
+
+`POST /containers/create`
+`POST /containers/(id)/start`
+
+**New!**
+(`ReadonlyRootfs`) can be passed in the host config to mount the container's
+root filesystem as read only.
+
+`GET /containers/(id)/stats`
+
+**New!**
+This endpoint returns a live stream of a container's resource usage statistics.
+
+> **Note**: this functionality currently only works when using the *libcontainer* exec-driver.
+
+
+## v1.16
+
+### Full Documentation
+
+[*Docker Remote API v1.16*](/reference/api/docker_remote_api_v1.16/)
+
+### What's new
+
+`GET /info`
+
+**New!**
+`info` now returns the number of CPUs available on the machine (`NCPU`),
+total memory available (`MemTotal`), a user-friendly name describing the running Docker daemon (`Name`), a unique ID identifying the daemon (`ID`), and
+a list of daemon labels (`Labels`).
+
+`POST /containers/create`
+
+**New!**
+You can set the new container's MAC address explicitly.
+
+**New!**
+Volumes are now initialized when the container is created.
+
+`POST /containers/(id)/copy`
+
+**New!**
+You can now copy data which is contained in a volume.
+
+## v1.15
+
+### Full Documentation
+
+[*Docker Remote API v1.15*](/reference/api/docker_remote_api_v1.15/)
+
+### What's new
+
+`POST /containers/create`
+
+**New!**
+It is now possible to set a container's HostConfig when creating a container.
+Previously this was only available when starting a container.
 
 ## v1.14
 
@@ -37,11 +137,7 @@ You can still call an old version of the API using
 `DELETE /containers/(id)`
 
 **New!**
-You can now use the `stop` parameter to stop running containers before removal
-(replace `force`).
-
-**New!**
-You can now use the `kill` parameter to kill running containers before removal.
+When using `force`, the container will be immediately killed with SIGKILL.
 
 `POST /containers/(id)/start`
 
@@ -316,7 +412,7 @@ output is now generated in the client, using the
 You can now split stderr from stdout. This is done by
 prefixing a header to each transmission. See
 [`POST /containers/(id)/attach`](
-/reference/api/docker_remote_api_v1.9/#post--containers-(id)-attach "POST /containers/(id)/attach").
+/reference/api/docker_remote_api_v1.9/#attach-to-a-container "POST /containers/(id)/attach").
 The WebSocket attach is unchanged. Note that attach calls on the
 previous API version didn't change. Stdout and stderr are merged.
 
@@ -374,7 +470,7 @@ Image's name added in the events
 ## v1.3
 
 docker v0.5.0
-[51f6c4a](https://github.com/dotcloud/docker/commit/51f6c4a7372450d164c61e0054daf0223ddbd909)
+[51f6c4a](https://github.com/docker/docker/commit/51f6c4a7372450d164c61e0054daf0223ddbd909)
 
 ### Full Documentation
 
@@ -414,7 +510,7 @@ Start containers (/containers/<id>/start):
 ## v1.2
 
 docker v0.4.2
-[2e7649b](https://github.com/dotcloud/docker/commit/2e7649beda7c820793bd46766cbc2cfeace7b168)
+[2e7649b](https://github.com/docker/docker/commit/2e7649beda7c820793bd46766cbc2cfeace7b168)
 
 ### Full Documentation
 
@@ -446,7 +542,7 @@ deleted/untagged.
 ## v1.1
 
 docker v0.4.0
-[a8ae398](https://github.com/dotcloud/docker/commit/a8ae398bf52e97148ee7bd0d5868de2e15bd297f)
+[a8ae398](https://github.com/docker/docker/commit/a8ae398bf52e97148ee7bd0d5868de2e15bd297f)
 
 ### Full Documentation
 
@@ -473,7 +569,7 @@ Uses json stream instead of HTML hijack, it looks like this:
 ## v1.0
 
 docker v0.3.4
-[8d73740](https://github.com/dotcloud/docker/commit/8d73740343778651c09160cde9661f5f387b36f4)
+[8d73740](https://github.com/docker/docker/commit/8d73740343778651c09160cde9661f5f387b36f4)
 
 ### Full Documentation
 

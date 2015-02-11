@@ -6,34 +6,69 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
 
-	"github.com/dotcloud/docker/image"
-	"github.com/dotcloud/docker/utils"
+	"github.com/docker/docker/image"
+	"github.com/docker/docker/pkg/parsers"
+	"github.com/docker/docker/registry"
+	"github.com/docker/docker/utils"
+	"github.com/docker/libtrust"
 )
 
 const DEFAULTTAG = "latest"
+
+var (
+	validTagName = regexp.MustCompile(`^[\w][\w.-]{0,127}$`)
+)
 
 type TagStore struct {
 	path         string
 	graph        *Graph
 	Repositories map[string]Repository
+	trustKey     libtrust.PrivateKey
 	sync.Mutex
+	// FIXME: move push/pull-related fields
+	// to a helper type
+	pullingPool map[string]chan struct{}
+	pushingPool map[string]chan struct{}
 }
 
 type Repository map[string]string
 
-func NewTagStore(path string, graph *Graph) (*TagStore, error) {
+// update Repository mapping with content of u
+func (r Repository) Update(u Repository) {
+	for k, v := range u {
+		r[k] = v
+	}
+}
+
+// return true if the contents of u Repository, are wholly contained in r Repository
+func (r Repository) Contains(u Repository) bool {
+	for k, v := range u {
+		// if u's key is not present in r OR u's key is present, but not the same value
+		if rv, ok := r[k]; !ok || (ok && rv != v) {
+			return false
+		}
+	}
+	return true
+}
+
+func NewTagStore(path string, graph *Graph, key libtrust.PrivateKey) (*TagStore, error) {
 	abspath, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
 	}
+
 	store := &TagStore{
 		path:         abspath,
 		graph:        graph,
+		trustKey:     key,
 		Repositories: make(map[string]Repository),
+		pullingPool:  make(map[string]chan struct{}),
+		pushingPool:  make(map[string]chan struct{}),
 	}
 	// Load the json file if it exists, otherwise create it.
 	if err := store.reload(); os.IsNotExist(err) {
@@ -72,7 +107,7 @@ func (store *TagStore) reload() error {
 func (store *TagStore) LookupImage(name string) (*image.Image, error) {
 	// FIXME: standardize on returning nil when the image doesn't exist, and err for everything else
 	// (so we can pass all errors here)
-	repos, tag := utils.ParseRepositoryTag(name)
+	repos, tag := parsers.ParseRepositoryTag(name)
 	if tag == "" {
 		tag = DEFAULTTAG
 	}
@@ -143,6 +178,7 @@ func (store *TagStore) Delete(repoName, tag string) (bool, error) {
 	if err := store.reload(); err != nil {
 		return false, err
 	}
+	repoName = registry.NormalizeLocalName(repoName)
 	if r, exists := store.Repositories[repoName]; exists {
 		if tag != "" {
 			if _, exists2 := r[tag]; exists2 {
@@ -177,20 +213,21 @@ func (store *TagStore) Set(repoName, tag, imageName string, force bool) error {
 	if err := validateRepoName(repoName); err != nil {
 		return err
 	}
-	if err := validateTagName(tag); err != nil {
+	if err := ValidateTagName(tag); err != nil {
 		return err
 	}
 	if err := store.reload(); err != nil {
 		return err
 	}
 	var repo Repository
+	repoName = registry.NormalizeLocalName(repoName)
 	if r, exists := store.Repositories[repoName]; exists {
 		repo = r
+		if old, exists := store.Repositories[repoName][tag]; exists && !force {
+			return fmt.Errorf("Conflict: Tag %s is already set to image %s, if you want to replace it, please use -f option", tag, old)
+		}
 	} else {
 		repo = make(map[string]string)
-		if old, exists := store.Repositories[repoName]; exists && !force {
-			return fmt.Errorf("Conflict: Tag %s:%s is already set to %s", repoName, tag, old)
-		}
 		store.Repositories[repoName] = repo
 	}
 	repo[tag] = img.ID
@@ -203,6 +240,7 @@ func (store *TagStore) Get(repoName string) (Repository, error) {
 	if err := store.reload(); err != nil {
 		return nil, err
 	}
+	repoName = registry.NormalizeLocalName(repoName)
 	if r, exists := store.Repositories[repoName]; exists {
 		return r, nil
 	}
@@ -249,16 +287,62 @@ func validateRepoName(name string) error {
 	if name == "" {
 		return fmt.Errorf("Repository name can't be empty")
 	}
+	if name == "scratch" {
+		return fmt.Errorf("'scratch' is a reserved name")
+	}
 	return nil
 }
 
 // Validate the name of a tag
-func validateTagName(name string) error {
+func ValidateTagName(name string) error {
 	if name == "" {
 		return fmt.Errorf("Tag name can't be empty")
 	}
-	if strings.Contains(name, "/") || strings.Contains(name, ":") {
-		return fmt.Errorf("Illegal tag name: %s", name)
+	if !validTagName.MatchString(name) {
+		return fmt.Errorf("Illegal tag name (%s): only [A-Za-z0-9_.-] are allowed, minimum 1, maximum 128 in length", name)
+	}
+	return nil
+}
+
+func (store *TagStore) poolAdd(kind, key string) (chan struct{}, error) {
+	store.Lock()
+	defer store.Unlock()
+
+	if c, exists := store.pullingPool[key]; exists {
+		return c, fmt.Errorf("pull %s is already in progress", key)
+	}
+	if c, exists := store.pushingPool[key]; exists {
+		return c, fmt.Errorf("push %s is already in progress", key)
+	}
+
+	c := make(chan struct{})
+	switch kind {
+	case "pull":
+		store.pullingPool[key] = c
+	case "push":
+		store.pushingPool[key] = c
+	default:
+		return nil, fmt.Errorf("Unknown pool type")
+	}
+	return c, nil
+}
+
+func (store *TagStore) poolRemove(kind, key string) error {
+	store.Lock()
+	defer store.Unlock()
+	switch kind {
+	case "pull":
+		if c, exists := store.pullingPool[key]; exists {
+			close(c)
+			delete(store.pullingPool, key)
+		}
+	case "push":
+		if c, exists := store.pushingPool[key]; exists {
+			close(c)
+			delete(store.pushingPool, key)
+		}
+	default:
+		return fmt.Errorf("Unknown pool type")
 	}
 	return nil
 }

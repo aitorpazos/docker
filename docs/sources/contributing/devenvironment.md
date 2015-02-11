@@ -10,6 +10,12 @@ used for all tests, builds and releases. The standard development
 environment defines all build dependencies: system libraries and
 binaries, go environment, go dependencies, etc.
 
+**Things you need:**
+
+ * Docker
+ * git
+ * make
+
 ## Install Docker
 
 Docker's build environment itself is a Docker container, so the first
@@ -32,7 +38,7 @@ Again, you can do it in other ways but you need to do more work.
 
 ## Check out the Source
 
-    $ git clone https://git@github.com/dotcloud/docker
+    $ git clone https://git@github.com/docker/docker
     $ cd docker
 
 To checkout a different revision just use `git checkout`
@@ -40,30 +46,40 @@ with the name of branch or revision number.
 
 ## Build the Environment
 
-This following command will build a development environment using the
-Dockerfile in the current directory. Essentially, it will install all
+This following command builds a development environment using the
+`Dockerfile` in the current directory. Essentially, it installs all
 the build and runtime dependencies necessary to build and test Docker.
-This command will take some time to complete when you first execute it.
+Your first build will take some time to complete. On Linux systems and on Mac
+OS X from within the `boot2docker` shell:
 
-    $ sudo make build
+    $ make build
+    
+> **Note**:
+> On Mac OS X, the Docker make targets such as `build`, `binary`, and `test`
+> should **not** be built by the 'root' user. Therefore, you shouldn't use `sudo` when 
+> running these commands on OS X.
+> On Linux, we suggest you add your current user to the `docker` group via
+> [these
+> instructions](http://docs.docker.com/installation/ubuntulinux/#giving-non-root-access).
 
 If the build is successful, congratulations! You have produced a clean
 build of docker, neatly encapsulated in a standard build environment.
 
-> **Note**:
-> On Mac OS X, make targets such as `build`, `binary`, and `test`
-> must **not** be built under root. So, for example, instead of the above
-> command, issue:
-> 
->     $ make build
 
 ## Build the Docker Binary
 
 To create the Docker binary, run this command:
 
-    $ sudo make binary
+    $ make binary
 
-This will create the Docker binary in `./bundles/<version>-dev/binary/`
+This will create the Docker binary in `./bundles/<version>-dev/binary/`. If you
+do not see files in the `./bundles` directory in your host, your `BINDDIR`
+setting is not set quite right. You want to run the following command: 
+    
+    $ make BINDDIR=. binary 
+
+If you are on a non-Linux platform, e.g., OSX, you'll want to run `make cross`
+or `make BINDDIR=. cross`.
 
 ### Using your built Docker binary
 
@@ -81,7 +97,7 @@ on ubuntu:
 
 To execute the test cases, run this command:
 
-    $ sudo make test
+    $ make test
 
 If the test are successful then the tail of the output should look
 something like this
@@ -101,8 +117,6 @@ something like this
     --- PASS: TestParseRepositoryTag (0.00 seconds)
     === RUN TestGetResolvConf
     --- PASS: TestGetResolvConf (0.00 seconds)
-    === RUN TestCheckLocalDns
-    --- PASS: TestCheckLocalDns (0.00 seconds)
     === RUN TestParseRelease
     --- PASS: TestParseRelease (0.00 seconds)
     === RUN TestDependencyGraphCircular
@@ -110,12 +124,14 @@ something like this
     === RUN TestDependencyGraph
     --- PASS: TestDependencyGraph (0.00 seconds)
     PASS
-    ok      github.com/dotcloud/docker/utils        0.017s
+    ok      github.com/docker/docker/utils        0.017s
 
-If $TESTFLAGS is set in the environment, it is passed as extra arguments
+If `$TESTFLAGS` is set in the environment, it will pass extra arguments
 to `go test`. You can use this to select certain tests to run, e.g.,
 
-    $ TESTFLAGS=`-run \^TestBuild\$` make test
+    $ TESTFLAGS='-test.run \^TestBuild\$' make test
+
+Only those test cases matching the regular expression inside quotation marks will be tested.
 
 If the output indicates "FAIL" and you see errors like this:
 
@@ -130,7 +146,7 @@ is recommended.
 
 You can run an interactive session in the newly built container:
 
-    $ sudo make shell
+    $ make shell
 
     # type 'exit' or Ctrl-D to exit
 
@@ -140,7 +156,7 @@ If you want to read the documentation from a local website, or are
 making changes to it, you can build the documentation and then serve it
 by:
 
-    $ sudo make docs
+    $ make docs
     
     # when its done, you can point your browser to http://yourdockerhost:8000
     # type Ctrl-C to exit

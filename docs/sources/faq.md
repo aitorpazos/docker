@@ -8,23 +8,25 @@ page_keywords: faq, questions, documentation, docker
 
 ### How much does Docker cost?
 
-Docker is 100% free, it is open source, so you can use it without
+Docker is 100% free. It is open source, so you can use it without
 paying.
 
 ### What open source license are you using?
 
 We are using the Apache License Version 2.0, see it here:
-[https://github.com/dotcloud/docker/blob/master/LICENSE](
-https://github.com/dotcloud/docker/blob/master/LICENSE)
+[https://github.com/docker/docker/blob/master/LICENSE](
+https://github.com/docker/docker/blob/master/LICENSE)
 
 ### Does Docker run on Mac OS X or Windows?
 
-Not at this time, Docker currently only runs on Linux, but you can use
-VirtualBox to run Docker in a virtual machine on your box, and get the
-best of both worlds. Check out the [*Mac OS X*](../installation/mac/#macosx)
-and [*Microsoft Windows*](../installation/windows/#windows) installation
-guides. The small Linux distribution boot2docker can be run inside virtual
-machines on these two operating systems.
+Docker currently runs only on Linux, but you can use VirtualBox to run
+Docker in a virtual machine on your box, and get the best of both worlds.
+Check out the [*Mac OS X*](../installation/mac/#macosx) and [*Microsoft
+Windows*](../installation/windows/#windows) installation guides. The small
+Linux distribution boot2docker can be run inside virtual machines on these
+two operating systems.
+
+{{ include "no-remote-sudo.md" }}
 
 ### How do containers compare to virtual machines?
 
@@ -144,7 +146,7 @@ Currently the recommended way to link containers is via the link
 primitive. You can see details of how to [work with links
 here](/userguide/dockerlinks).
 
-Also of useful when enabling more flexible service portability is the
+Also useful for more flexible service portability is the
 [Ambassador linking pattern](/articles/ambassador_pattern_linking/).
 
 ### How do I run more than one process in a Docker container?
@@ -225,9 +227,41 @@ Downloading and installing an "all-in-one" .deb or .rpm sounds great at first,
 except if you have no way to figure out that it contains a copy of the
 OpenSSL library vulnerable to the [Heartbleed](http://heartbleed.com/) bug.
 
+### Why is `DEBIAN_FRONTEND=noninteractive` discouraged in Dockerfiles?
+
+When building Docker images on Debian and Ubuntu you may have seen errors like:
+
+    unable to initialize frontend: Dialog
+
+These errors don't stop the image from being built but inform you that the
+installation process tried to open a dialog box, but was unable to. 
+Generally, these errors are safe to ignore.
+
+Some people circumvent these errors by changing the `DEBIAN_FRONTEND` 
+environment variable inside the Dockerfile using:
+
+    ENV DEBIAN_FRONTEND=noninteractive
+
+This prevents the installer from opening dialog boxes during installation 
+which stops the errors.
+
+While this may sound like a good idea, it *may* have side effects. 
+The `DEBIAN_FRONTEND` environment variable will be inherited by all 
+images and containers built from your image, effectively changing
+their behavior. People using those images will run into problems when
+installing software interactively, because installers will not show
+any dialog boxes.
+
+Because of this, and because setting `DEBIAN_FRONTEND` to `noninteractive` is
+mainly a 'cosmetic' change, we *discourage* changing it.
+
+If you *really* need to change its setting, make sure to change it
+back to its [default value](https://www.debian.org/releases/stable/i386/ch05s03.html.en) 
+afterwards.
+
 ### Can I help by adding some questions and answers?
 
-Definitely! You can fork [the repo](https://github.com/dotcloud/docker) and
+Definitely! You can fork [the repo](https://github.com/docker/docker) and
 edit the documentation sources.
 
 ### Where can I find more answers?
@@ -237,7 +271,7 @@ You can find more answers on:
 - [Docker user mailinglist](https://groups.google.com/d/forum/docker-user)
 - [Docker developer mailinglist](https://groups.google.com/d/forum/docker-dev)
 - [IRC, docker on freenode](irc://chat.freenode.net#docker)
-- [GitHub](https://github.com/dotcloud/docker)
+- [GitHub](https://github.com/docker/docker)
 - [Ask questions on Stackoverflow](http://stackoverflow.com/search?q=docker)
 - [Join the conversation on Twitter](http://twitter.com/docker)
 

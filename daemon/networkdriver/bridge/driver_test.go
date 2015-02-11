@@ -1,13 +1,19 @@
 package bridge
 
 import (
-	"fmt"
 	"net"
 	"strconv"
 	"testing"
 
-	"github.com/dotcloud/docker/engine"
+	"github.com/docker/docker/daemon/networkdriver/portmapper"
+	"github.com/docker/docker/engine"
+	"github.com/docker/docker/pkg/iptables"
 )
+
+func init() {
+	// reset the new proxy command for mocking out the userland proxy in tests
+	portmapper.NewProxy = portmapper.NewMockProxyCommand
+}
 
 func findFreePort(t *testing.T) int {
 	l, err := net.Listen("tcp", ":0")
@@ -28,6 +34,17 @@ func newPortAllocationJob(eng *engine.Engine, port int) (job *engine.Job) {
 
 	job = eng.Job("allocate_port", "container_id")
 	job.Setenv("HostIP", "127.0.0.1")
+	job.Setenv("HostPort", strPort)
+	job.Setenv("Proto", "tcp")
+	job.Setenv("ContainerPort", strPort)
+	return
+}
+
+func newPortAllocationJobWithInvalidHostIP(eng *engine.Engine, port int) (job *engine.Job) {
+	strPort := strconv.Itoa(port)
+
+	job = eng.Job("allocate_port", "container_id")
+	job.Setenv("HostIP", "localhost")
 	job.Setenv("HostPort", strPort)
 	job.Setenv("Proto", "tcp")
 	job.Setenv("ContainerPort", strPort)
@@ -62,7 +79,7 @@ func TestAllocatePortDetection(t *testing.T) {
 	}
 }
 
-func TestAllocatePortReclaim(t *testing.T) {
+func TestHostnameFormatChecking(t *testing.T) {
 	eng := engine.New()
 	eng.Logging = false
 
@@ -80,27 +97,65 @@ func TestAllocatePortReclaim(t *testing.T) {
 		t.Fatal("Failed to allocate network interface")
 	}
 
-	// Occupy port
-	listenAddr := fmt.Sprintf(":%d", freePort)
-	tcpListenAddr, err := net.ResolveTCPAddr("tcp", listenAddr)
-	if err != nil {
-		t.Fatalf("Failed to resolve TCP address '%s'", listenAddr)
-	}
-
-	l, err := net.ListenTCP("tcp", tcpListenAddr)
-	if err != nil {
-		t.Fatalf("Fail to listen on port %d", freePort)
-	}
-
-	// Allocate port, expect failure
-	job = newPortAllocationJob(eng, freePort)
+	// Allocate port with invalid HostIP, expect failure with Bad Request http status
+	job = newPortAllocationJobWithInvalidHostIP(eng, freePort)
 	if res := AllocatePort(job); res == engine.StatusOK {
-		t.Fatal("Successfully allocated currently used port")
+		t.Fatal("Failed to check invalid HostIP")
+	}
+}
+
+func TestMacAddrGeneration(t *testing.T) {
+	ip := net.ParseIP("192.168.0.1")
+	mac := generateMacAddr(ip).String()
+
+	// Should be consistent.
+	if generateMacAddr(ip).String() != mac {
+		t.Fatal("Inconsistent MAC address")
 	}
 
-	// Reclaim port, retry allocation
-	l.Close()
-	if res := AllocatePort(job); res != engine.StatusOK {
-		t.Fatal("Failed to allocate previously reclaimed port")
+	// Should be unique.
+	ip2 := net.ParseIP("192.168.0.2")
+	if generateMacAddr(ip2).String() == mac {
+		t.Fatal("Non-unique MAC address")
 	}
+}
+
+func TestLinkContainers(t *testing.T) {
+	eng := engine.New()
+	eng.Logging = false
+
+	// Init driver
+	job := eng.Job("initdriver")
+	if res := InitDriver(job); res != engine.StatusOK {
+		t.Fatal("Failed to initialize network driver")
+	}
+
+	// Allocate interface
+	job = eng.Job("allocate_interface", "container_id")
+	if res := Allocate(job); res != engine.StatusOK {
+		t.Fatal("Failed to allocate network interface")
+	}
+
+	job.Args[0] = "-I"
+
+	job.Setenv("ChildIP", "172.17.0.2")
+	job.Setenv("ParentIP", "172.17.0.1")
+	job.SetenvBool("IgnoreErrors", false)
+	job.SetenvList("Ports", []string{"1234"})
+
+	bridgeIface = "lo"
+	_, err := iptables.NewChain("DOCKER", bridgeIface, iptables.Filter)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if res := LinkContainers(job); res != engine.StatusOK {
+		t.Fatalf("LinkContainers failed")
+	}
+
+	// flush rules
+	if _, err = iptables.Raw([]string{"-F", "DOCKER"}...); err != nil {
+		t.Fatal(err)
+	}
+
 }

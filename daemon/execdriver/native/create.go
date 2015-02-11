@@ -8,14 +8,13 @@ import (
 	"os/exec"
 	"path/filepath"
 
+	"github.com/docker/docker/daemon/execdriver"
+	"github.com/docker/docker/daemon/execdriver/native/template"
 	"github.com/docker/libcontainer"
 	"github.com/docker/libcontainer/apparmor"
 	"github.com/docker/libcontainer/devices"
 	"github.com/docker/libcontainer/mount"
 	"github.com/docker/libcontainer/security/capabilities"
-	"github.com/dotcloud/docker/daemon/execdriver"
-	"github.com/dotcloud/docker/daemon/execdriver/native/configuration"
-	"github.com/dotcloud/docker/daemon/execdriver/native/template"
 )
 
 // createContainer populates and configures the container type with the
@@ -23,24 +22,34 @@ import (
 func (d *driver) createContainer(c *execdriver.Command) (*libcontainer.Config, error) {
 	container := template.New()
 
-	container.Hostname = getEnv("HOSTNAME", c.Env)
-	container.Tty = c.Tty
-	container.User = c.User
+	container.Hostname = getEnv("HOSTNAME", c.ProcessConfig.Env)
+	container.Tty = c.ProcessConfig.Tty
+	container.User = c.ProcessConfig.User
 	container.WorkingDir = c.WorkingDir
-	container.Env = c.Env
+	container.Env = c.ProcessConfig.Env
 	container.Cgroups.Name = c.ID
 	container.Cgroups.AllowedDevices = c.AllowedDevices
 	container.MountConfig.DeviceNodes = c.AutoCreatedDevices
+	container.RootFs = c.Rootfs
+	container.MountConfig.ReadonlyFs = c.ReadonlyRootfs
 
 	// check to see if we are running in ramdisk to disable pivot root
 	container.MountConfig.NoPivotRoot = os.Getenv("DOCKER_RAMDISK") != ""
 	container.RestrictSys = true
 
+	if err := d.createIpc(container, c); err != nil {
+		return nil, err
+	}
+
+	if err := d.createPid(container, c); err != nil {
+		return nil, err
+	}
+
 	if err := d.createNetwork(container, c); err != nil {
 		return nil, err
 	}
 
-	if c.Privileged {
+	if c.ProcessConfig.Privileged {
 		if err := d.setPrivileged(container); err != nil {
 			return nil, err
 		}
@@ -48,6 +57,10 @@ func (d *driver) createContainer(c *execdriver.Command) (*libcontainer.Config, e
 		if err := d.setCapabilities(container, c); err != nil {
 			return nil, err
 		}
+	}
+
+	if c.AppArmorProfile != "" {
+		container.AppArmorProfile = c.AppArmorProfile
 	}
 
 	if err := d.setupCgroups(container, c); err != nil {
@@ -69,16 +82,12 @@ func (d *driver) createContainer(c *execdriver.Command) (*libcontainer.Config, e
 	}
 	d.Unlock()
 
-	if err := configuration.ParseConfiguration(container, cmds, c.Config["native"]); err != nil {
-		return nil, err
-	}
-
 	return container, nil
 }
 
 func (d *driver) createNetwork(container *libcontainer.Config, c *execdriver.Command) error {
 	if c.Network.HostNetworking {
-		container.Namespaces["NEWNET"] = false
+		container.Namespaces.Remove(libcontainer.NEWNET)
 		return nil
 	}
 
@@ -95,10 +104,15 @@ func (d *driver) createNetwork(container *libcontainer.Config, c *execdriver.Com
 		vethNetwork := libcontainer.Network{
 			Mtu:        c.Network.Mtu,
 			Address:    fmt.Sprintf("%s/%d", c.Network.Interface.IPAddress, c.Network.Interface.IPPrefixLen),
+			MacAddress: c.Network.Interface.MacAddress,
 			Gateway:    c.Network.Interface.Gateway,
 			Type:       "veth",
 			Bridge:     c.Network.Interface.Bridge,
 			VethPrefix: "veth",
+		}
+		if c.Network.Interface.GlobalIPv6Address != "" {
+			vethNetwork.IPv6Address = fmt.Sprintf("%s/%d", c.Network.Interface.GlobalIPv6Address, c.Network.Interface.GlobalIPv6PrefixLen)
+			vethNetwork.IPv6Gateway = c.Network.Interface.IPv6Gateway
 		}
 		container.Networks = append(container.Networks, &vethNetwork)
 	}
@@ -114,10 +128,38 @@ func (d *driver) createNetwork(container *libcontainer.Config, c *execdriver.Com
 		cmd := active.cmd
 
 		nspath := filepath.Join("/proc", fmt.Sprint(cmd.Process.Pid), "ns", "net")
-		container.Networks = append(container.Networks, &libcontainer.Network{
-			Type:   "netns",
-			NsPath: nspath,
-		})
+		container.Namespaces.Add(libcontainer.NEWNET, nspath)
+	}
+
+	return nil
+}
+
+func (d *driver) createIpc(container *libcontainer.Config, c *execdriver.Command) error {
+	if c.Ipc.HostIpc {
+		container.Namespaces.Remove(libcontainer.NEWIPC)
+		return nil
+	}
+
+	if c.Ipc.ContainerID != "" {
+		d.Lock()
+		active := d.activeContainers[c.Ipc.ContainerID]
+		d.Unlock()
+
+		if active == nil || active.cmd.Process == nil {
+			return fmt.Errorf("%s is not a valid running container to join", c.Ipc.ContainerID)
+		}
+		cmd := active.cmd
+
+		container.Namespaces.Add(libcontainer.NEWIPC, filepath.Join("/proc", fmt.Sprint(cmd.Process.Pid), "ns", "ipc"))
+	}
+
+	return nil
+}
+
+func (d *driver) createPid(container *libcontainer.Config, c *execdriver.Command) error {
+	if c.Pid.HostPid {
+		container.Namespaces.Remove(libcontainer.NEWPID)
+		return nil
 	}
 
 	return nil
@@ -161,12 +203,13 @@ func (d *driver) setupCgroups(container *libcontainer.Config, c *execdriver.Comm
 
 func (d *driver) setupMounts(container *libcontainer.Config, c *execdriver.Command) error {
 	for _, m := range c.Mounts {
-		container.MountConfig.Mounts = append(container.MountConfig.Mounts, mount.Mount{
+		container.MountConfig.Mounts = append(container.MountConfig.Mounts, &mount.Mount{
 			Type:        "bind",
 			Source:      m.Source,
 			Destination: m.Destination,
 			Writable:    m.Writable,
 			Private:     m.Private,
+			Slave:       m.Slave,
 		})
 	}
 
@@ -174,8 +217,8 @@ func (d *driver) setupMounts(container *libcontainer.Config, c *execdriver.Comma
 }
 
 func (d *driver) setupLabels(container *libcontainer.Config, c *execdriver.Command) error {
-	container.ProcessLabel = c.Config["process_label"][0]
-	container.MountConfig.MountLabel = c.Config["mount_label"][0]
+	container.ProcessLabel = c.ProcessLabel
+	container.MountConfig.MountLabel = c.MountLabel
 
 	return nil
 }

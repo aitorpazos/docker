@@ -5,15 +5,19 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dotcloud/docker/pkg/units"
+	"github.com/docker/docker/daemon/execdriver"
+	"github.com/docker/docker/pkg/units"
 )
 
 type State struct {
-	sync.RWMutex
+	sync.Mutex
 	Running    bool
 	Paused     bool
+	Restarting bool
+	OOMKilled  bool
 	Pid        int
 	ExitCode   int
+	Error      string // contains last known error when starting the container
 	StartedAt  time.Time
 	FinishedAt time.Time
 	waitChan   chan struct{}
@@ -27,19 +31,36 @@ func NewState() *State {
 
 // String returns a human-readable description of the state
 func (s *State) String() string {
-	s.RLock()
-	defer s.RUnlock()
-
 	if s.Running {
 		if s.Paused {
 			return fmt.Sprintf("Up %s (Paused)", units.HumanDuration(time.Now().UTC().Sub(s.StartedAt)))
 		}
+		if s.Restarting {
+			return fmt.Sprintf("Restarting (%d) %s ago", s.ExitCode, units.HumanDuration(time.Now().UTC().Sub(s.FinishedAt)))
+		}
+
 		return fmt.Sprintf("Up %s", units.HumanDuration(time.Now().UTC().Sub(s.StartedAt)))
 	}
+
 	if s.FinishedAt.IsZero() {
 		return ""
 	}
+
 	return fmt.Sprintf("Exited (%d) %s ago", s.ExitCode, units.HumanDuration(time.Now().UTC().Sub(s.FinishedAt)))
+}
+
+// StateString returns a single string to describe state
+func (s *State) StateString() string {
+	if s.Running {
+		if s.Paused {
+			return "paused"
+		}
+		if s.Restarting {
+			return "restarting"
+		}
+		return "running"
+	}
+	return "exited"
 }
 
 func wait(waitChan <-chan struct{}, timeout time.Duration) error {
@@ -56,17 +77,17 @@ func wait(waitChan <-chan struct{}, timeout time.Duration) error {
 }
 
 // WaitRunning waits until state is running. If state already running it returns
-// immediatly. If you want wait forever you must supply negative timeout.
+// immediately. If you want wait forever you must supply negative timeout.
 // Returns pid, that was passed to SetRunning
 func (s *State) WaitRunning(timeout time.Duration) (int, error) {
-	s.RLock()
-	if s.IsRunning() {
+	s.Lock()
+	if s.Running {
 		pid := s.Pid
-		s.RUnlock()
+		s.Unlock()
 		return pid, nil
 	}
 	waitChan := s.waitChan
-	s.RUnlock()
+	s.Unlock()
 	if err := wait(waitChan, timeout); err != nil {
 		return -1, err
 	}
@@ -74,17 +95,17 @@ func (s *State) WaitRunning(timeout time.Duration) (int, error) {
 }
 
 // WaitStop waits until state is stopped. If state already stopped it returns
-// immediatly. If you want wait forever you must supply negative timeout.
+// immediately. If you want wait forever you must supply negative timeout.
 // Returns exit code, that was passed to SetStopped
 func (s *State) WaitStop(timeout time.Duration) (int, error) {
-	s.RLock()
+	s.Lock()
 	if !s.Running {
 		exitCode := s.ExitCode
-		s.RUnlock()
+		s.Unlock()
 		return exitCode, nil
 	}
 	waitChan := s.waitChan
-	s.RUnlock()
+	s.Unlock()
 	if err := wait(waitChan, timeout); err != nil {
 		return -1, err
 	}
@@ -92,51 +113,90 @@ func (s *State) WaitStop(timeout time.Duration) (int, error) {
 }
 
 func (s *State) IsRunning() bool {
-	s.RLock()
+	s.Lock()
 	res := s.Running
-	s.RUnlock()
+	s.Unlock()
 	return res
 }
 
 func (s *State) GetPid() int {
-	s.RLock()
+	s.Lock()
 	res := s.Pid
-	s.RUnlock()
+	s.Unlock()
 	return res
 }
 
 func (s *State) GetExitCode() int {
-	s.RLock()
+	s.Lock()
 	res := s.ExitCode
-	s.RUnlock()
+	s.Unlock()
 	return res
 }
 
 func (s *State) SetRunning(pid int) {
 	s.Lock()
-	if !s.Running {
-		s.Running = true
-		s.Paused = false
-		s.ExitCode = 0
-		s.Pid = pid
-		s.StartedAt = time.Now().UTC()
-		close(s.waitChan) // fire waiters for start
-		s.waitChan = make(chan struct{})
-	}
+	s.setRunning(pid)
 	s.Unlock()
 }
 
-func (s *State) SetStopped(exitCode int) {
+func (s *State) setRunning(pid int) {
+	s.Error = ""
+	s.Running = true
+	s.Paused = false
+	s.Restarting = false
+	s.ExitCode = 0
+	s.Pid = pid
+	s.StartedAt = time.Now().UTC()
+	close(s.waitChan) // fire waiters for start
+	s.waitChan = make(chan struct{})
+}
+
+func (s *State) SetStopped(exitStatus *execdriver.ExitStatus) {
 	s.Lock()
-	if s.Running {
-		s.Running = false
-		s.Pid = 0
-		s.FinishedAt = time.Now().UTC()
-		s.ExitCode = exitCode
-		close(s.waitChan) // fire waiters for stop
-		s.waitChan = make(chan struct{})
-	}
+	s.setStopped(exitStatus)
 	s.Unlock()
+}
+
+func (s *State) setStopped(exitStatus *execdriver.ExitStatus) {
+	s.Running = false
+	s.Restarting = false
+	s.Pid = 0
+	s.FinishedAt = time.Now().UTC()
+	s.ExitCode = exitStatus.ExitCode
+	s.OOMKilled = exitStatus.OOMKilled
+	close(s.waitChan) // fire waiters for stop
+	s.waitChan = make(chan struct{})
+}
+
+// SetRestarting is when docker hanldes the auto restart of containers when they are
+// in the middle of a stop and being restarted again
+func (s *State) SetRestarting(exitStatus *execdriver.ExitStatus) {
+	s.Lock()
+	// we should consider the container running when it is restarting because of
+	// all the checks in docker around rm/stop/etc
+	s.Running = true
+	s.Restarting = true
+	s.Pid = 0
+	s.FinishedAt = time.Now().UTC()
+	s.ExitCode = exitStatus.ExitCode
+	s.OOMKilled = exitStatus.OOMKilled
+	close(s.waitChan) // fire waiters for stop
+	s.waitChan = make(chan struct{})
+	s.Unlock()
+}
+
+// setError sets the container's error state. This is useful when we want to
+// know the error that occurred when container transits to another state
+// when inspecting it
+func (s *State) setError(err error) {
+	s.Error = err.Error()
+}
+
+func (s *State) IsRestarting() bool {
+	s.Lock()
+	res := s.Restarting
+	s.Unlock()
+	return res
 }
 
 func (s *State) SetPaused() {
@@ -152,8 +212,8 @@ func (s *State) SetUnpaused() {
 }
 
 func (s *State) IsPaused() bool {
-	s.RLock()
+	s.Lock()
 	res := s.Paused
-	s.RUnlock()
+	s.Unlock()
 	return res
 }

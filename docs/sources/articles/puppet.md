@@ -6,7 +6,7 @@ page_keywords: puppet, installation, usage, docker, documentation
 
 > *Note:* Please note this is a community contributed installation path. The
 > only `official` installation is using the
-> [*Ubuntu*](/installation/ubuntulinux/#ubuntu-linux) installation
+> [*Ubuntu*](/installation/ubuntulinux) installation
 > path. This version may sometimes be out of date.
 
 ## Requirements
@@ -47,7 +47,7 @@ defined type which can be used like so:
 
 This is equivalent to running:
 
-    $ docker pull ubuntu
+    $ sudo docker pull ubuntu
 
 Note that it will only be downloaded if an image of that name does not
 already exist. This is downloading a large binary so on first run can
@@ -71,7 +71,7 @@ managed by Docker.
 
 This is equivalent to running the following command, but under upstart:
 
-    $ docker run -d ubuntu /bin/sh -c "while true; do echo hello world; sleep 1; done"
+    $ sudo docker run -d ubuntu /bin/sh -c "while true; do echo hello world; sleep 1; done"
 
 Run also contains a number of optional parameters:
 

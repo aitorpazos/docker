@@ -5,15 +5,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dotcloud/docker/engine"
-	"github.com/dotcloud/docker/runconfig"
+	"github.com/docker/docker/engine"
 )
 
 func TestCreateNumberHostname(t *testing.T) {
 	eng := NewTestEngine(t)
 	defer mkDaemonFromEngine(eng, t).Nuke()
 
-	config, _, _, err := runconfig.Parse([]string{"-h", "web.0", unitTestImageID, "echo test"}, nil)
+	config, _, _, err := parseRun([]string{"-h", "web.0", unitTestImageID, "echo test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,7 +24,7 @@ func TestCommit(t *testing.T) {
 	eng := NewTestEngine(t)
 	defer mkDaemonFromEngine(eng, t).Nuke()
 
-	config, _, _, err := runconfig.Parse([]string{unitTestImageID, "/bin/cat"}, nil)
+	config, _, _, err := parseRun([]string{unitTestImageID, "/bin/cat"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +48,7 @@ func TestMergeConfigOnCommit(t *testing.T) {
 	container1, _, _ := mkContainer(runtime, []string{"-e", "FOO=bar", unitTestImageID, "echo test > /tmp/foo"}, t)
 	defer runtime.Destroy(container1)
 
-	config, _, _, err := runconfig.Parse([]string{container1.ID, "cat /tmp/foo"}, nil)
+	config, _, _, err := parseRun([]string{container1.ID, "cat /tmp/foo"})
 	if err != nil {
 		t.Error(err)
 	}
@@ -100,11 +99,10 @@ func TestMergeConfigOnCommit(t *testing.T) {
 
 func TestRestartKillWait(t *testing.T) {
 	eng := NewTestEngine(t)
-	srv := mkServerFromEngine(eng, t)
 	runtime := mkDaemonFromEngine(eng, t)
 	defer runtime.Nuke()
 
-	config, hostConfig, _, err := runconfig.Parse([]string{"-i", unitTestImageID, "/bin/cat"}, nil)
+	config, hostConfig, _, err := parseRun([]string{"-i", unitTestImageID, "/bin/cat"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,9 +136,8 @@ func TestRestartKillWait(t *testing.T) {
 	}
 
 	eng = newTestEngine(t, false, runtime.Config().Root)
-	srv = mkServerFromEngine(eng, t)
 
-	job = srv.Eng.Job("containers")
+	job = eng.Job("containers")
 	job.SetenvBool("all", true)
 	outs, err = job.Stdout.AddListTable()
 	if err != nil {
@@ -155,7 +152,7 @@ func TestRestartKillWait(t *testing.T) {
 	}
 
 	setTimeout(t, "Waiting on stopped container timedout", 5*time.Second, func() {
-		job = srv.Eng.Job("wait", outs.Data[0].Get("Id"))
+		job = eng.Job("wait", outs.Data[0].Get("Id"))
 		if err := job.Run(); err != nil {
 			t.Fatal(err)
 		}
@@ -164,17 +161,16 @@ func TestRestartKillWait(t *testing.T) {
 
 func TestCreateStartRestartStopStartKillRm(t *testing.T) {
 	eng := NewTestEngine(t)
-	srv := mkServerFromEngine(eng, t)
 	defer mkDaemonFromEngine(eng, t).Nuke()
 
-	config, hostConfig, _, err := runconfig.Parse([]string{"-i", unitTestImageID, "/bin/cat"}, nil)
+	config, hostConfig, _, err := parseRun([]string{"-i", unitTestImageID, "/bin/cat"})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	id := createTestContainer(eng, config, t)
 
-	job := srv.Eng.Job("containers")
+	job := eng.Job("containers")
 	job.SetenvBool("all", true)
 	outs, err := job.Stdout.AddListTable()
 	if err != nil {
@@ -197,13 +193,13 @@ func TestCreateStartRestartStopStartKillRm(t *testing.T) {
 	}
 
 	job = eng.Job("restart", id)
-	job.SetenvInt("t", 15)
+	job.SetenvInt("t", 2)
 	if err := job.Run(); err != nil {
 		t.Fatal(err)
 	}
 
 	job = eng.Job("stop", id)
-	job.SetenvInt("t", 15)
+	job.SetenvInt("t", 2)
 	if err := job.Run(); err != nil {
 		t.Fatal(err)
 	}
@@ -221,13 +217,13 @@ func TestCreateStartRestartStopStartKillRm(t *testing.T) {
 	}
 
 	// FIXME: this failed once with a race condition ("Unable to remove filesystem for xxx: directory not empty")
-	job = eng.Job("container_delete", id)
+	job = eng.Job("rm", id)
 	job.SetenvBool("removeVolume", true)
 	if err := job.Run(); err != nil {
 		t.Fatal(err)
 	}
 
-	job = srv.Eng.Job("containers")
+	job = eng.Job("containers")
 	job.SetenvBool("all", true)
 	outs, err = job.Stdout.AddListTable()
 	if err != nil {
@@ -295,58 +291,5 @@ func TestImagesFilter(t *testing.T) {
 
 	if len(images.Data[0].GetList("RepoTags")) != 1 {
 		t.Fatal("incorrect number of matches returned")
-	}
-}
-
-// Regression test for being able to untag an image with an existing
-// container
-func TestDeleteTagWithExistingContainers(t *testing.T) {
-	eng := NewTestEngine(t)
-	defer nuke(mkDaemonFromEngine(eng, t))
-
-	srv := mkServerFromEngine(eng, t)
-
-	// Tag the image
-	if err := eng.Job("tag", unitTestImageID, "utest", "tag1").Run(); err != nil {
-		t.Fatal(err)
-	}
-
-	// Create a container from the image
-	config, _, _, err := runconfig.Parse([]string{unitTestImageID, "echo test"}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	id := createNamedTestContainer(eng, config, t, "testingtags")
-	if id == "" {
-		t.Fatal("No id returned")
-	}
-
-	job := srv.Eng.Job("containers")
-	job.SetenvBool("all", true)
-	outs, err := job.Stdout.AddListTable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := job.Run(); err != nil {
-		t.Fatal(err)
-	}
-
-	if len(outs.Data) != 1 {
-		t.Fatalf("Expected 1 container got %d", len(outs.Data))
-	}
-
-	// Try to remove the tag
-	imgs := engine.NewTable("", 0)
-	if err := srv.DeleteImage("utest:tag1", imgs, true, false, false); err != nil {
-		t.Fatal(err)
-	}
-
-	if len(imgs.Data) != 1 {
-		t.Fatalf("Should only have deleted one untag %d", len(imgs.Data))
-	}
-
-	if untag := imgs.Data[0].Get("Untagged"); untag != "utest:tag1" {
-		t.Fatalf("Expected %s got %s", unitTestImageID, untag)
 	}
 }

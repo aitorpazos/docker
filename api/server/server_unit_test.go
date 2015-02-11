@@ -11,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dotcloud/docker/api"
-	"github.com/dotcloud/docker/engine"
-	"github.com/dotcloud/docker/pkg/version"
+	"github.com/docker/docker/api"
+	"github.com/docker/docker/engine"
+	"github.com/docker/docker/pkg/version"
 )
 
 func TestGetBoolParam(t *testing.T) {
@@ -455,7 +455,7 @@ func TestDeleteContainers(t *testing.T) {
 	eng := engine.New()
 	name := "foo"
 	var called bool
-	eng.Register("container_delete", func(job *engine.Job) engine.Status {
+	eng.Register("rm", func(job *engine.Job) engine.Status {
 		called = true
 		if len(job.Args) == 0 {
 			t.Fatalf("Job arguments is empty")
@@ -474,30 +474,6 @@ func TestDeleteContainers(t *testing.T) {
 	}
 }
 
-func TestDeleteContainersWithStopAndKill(t *testing.T) {
-	if api.APIVERSION.LessThan("1.14") {
-		return
-	}
-	eng := engine.New()
-	var called bool
-	eng.Register("container_delete", func(job *engine.Job) engine.Status {
-		called = true
-		return engine.StatusOK
-	})
-	r := serveRequest("DELETE", "/containers/foo?stop=1&kill=1", nil, eng, t)
-	if r.Code != http.StatusBadRequest {
-		t.Fatalf("Got status %d, expected %d", r.Code, http.StatusBadRequest)
-	}
-	if called {
-		t.Fatalf("container_delete jobs was called, but it shouldn't")
-	}
-	res := strings.TrimSpace(r.Body.String())
-	expected := "Bad parameters: can't use stop and kill simultaneously"
-	if !strings.Contains(res, expected) {
-		t.Fatalf("Output %s, expected %s in it", res, expected)
-	}
-}
-
 func serveRequest(method, target string, body io.Reader, eng *engine.Engine, t *testing.T) *httptest.ResponseRecorder {
 	return serveRequestUsingVersion(method, target, api.APIVERSION, body, eng, t)
 }
@@ -508,9 +484,7 @@ func serveRequestUsingVersion(method, target string, version version.Version, bo
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ServeRequest(eng, version, r, req); err != nil {
-		t.Fatal(err)
-	}
+	ServeRequest(eng, version, r, req)
 	return r
 }
 

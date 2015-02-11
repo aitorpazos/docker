@@ -23,6 +23,7 @@
 . /etc/rc.d/init.d/functions
 
 prog="docker"
+unshare=/usr/bin/unshare
 exec="/usr/bin/$prog"
 pidfile="/var/run/$prog.pid"
 lockfile="/var/lock/subsys/$prog"
@@ -42,15 +43,17 @@ prestart() {
 start() {
     [ -x $exec ] || exit 5
 
+    check_for_cleanup
+
     if ! [ -f $pidfile ]; then
         prestart
         printf "Starting $prog:\t"
         echo "\n$(date)\n" >> $logfile
-        $exec -d $other_args &>> $logfile &
+        "$unshare" -m -- $exec -d $other_args &>> $logfile &
         pid=$!
         touch $lockfile
         # wait up to 10 seconds for the pidfile to exist.  see
-        # https://github.com/dotcloud/docker/issues/5359
+        # https://github.com/docker/docker/issues/5359
         tries=0
         while [ ! -f $pidfile -a $tries -lt 10 ]; do
             sleep 1
@@ -68,7 +71,7 @@ start() {
 
 stop() {
     echo -n $"Stopping $prog: "
-    killproc -p $pidfile $prog
+    killproc -p $pidfile -d 300 $prog
     retval=$?
     echo
     [ $retval -eq 0 ] && rm -f $lockfile
@@ -94,6 +97,13 @@ rh_status() {
 
 rh_status_q() {
     rh_status >/dev/null 2>&1
+}
+
+
+check_for_cleanup() {
+    if [ -f ${pidfile} ]; then
+        /bin/ps -fp $(cat ${pidfile}) > /dev/null || rm ${pidfile}
+    fi
 }
 
 case "$1" in

@@ -20,6 +20,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/docker/docker/api"
 )
 
 // Daemon represents a Docker daemon for the testing framework.
@@ -266,11 +268,29 @@ func (d *Daemon) Cmd(name string, arg ...string) (string, error) {
 }
 
 func daemonHost() string {
-	daemonUrlStr := "unix:///var/run/docker.sock"
-	if daemonHostVar := os.Getenv("DOCKER_TEST_HOST"); daemonHostVar != "" {
+	daemonUrlStr := "unix://" + api.DEFAULTUNIXSOCKET
+	if daemonHostVar := os.Getenv("DOCKER_HOST"); daemonHostVar != "" {
 		daemonUrlStr = daemonHostVar
 	}
 	return daemonUrlStr
+}
+
+func sockConn(timeout time.Duration) (net.Conn, error) {
+	daemon := daemonHost()
+	daemonUrl, err := url.Parse(daemon)
+	if err != nil {
+		return nil, fmt.Errorf("could not parse url %q: %v", daemon, err)
+	}
+
+	var c net.Conn
+	switch daemonUrl.Scheme {
+	case "unix":
+		return net.DialTimeout(daemonUrl.Scheme, daemonUrl.Path, timeout)
+	case "tcp":
+		return net.DialTimeout(daemonUrl.Scheme, daemonUrl.Host, timeout)
+	default:
+		return c, fmt.Errorf("unknown scheme %v (%s)", daemonUrl.Scheme, daemon)
+	}
 }
 
 func sockRequest(method, endpoint string, data interface{}) ([]byte, error) {
@@ -283,23 +303,9 @@ func sockRequest(method, endpoint string, data interface{}) ([]byte, error) {
 }
 
 func sockRequestRaw(method, endpoint string, data io.Reader, ct string) ([]byte, error) {
-	daemon := daemonHost()
-	daemonUrl, err := url.Parse(daemon)
+	c, err := sockConn(time.Duration(10 * time.Second))
 	if err != nil {
-		return nil, fmt.Errorf("could not parse url %q: %v", daemon, err)
-	}
-
-	var c net.Conn
-	switch daemonUrl.Scheme {
-	case "unix":
-		c, err = net.DialTimeout(daemonUrl.Scheme, daemonUrl.Path, time.Duration(10*time.Second))
-	case "tcp":
-		c, err = net.DialTimeout(daemonUrl.Scheme, daemonUrl.Host, time.Duration(10*time.Second))
-	default:
-		err = fmt.Errorf("unknown scheme %v", daemonUrl.Scheme)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("could not dial docker daemon at %s: %v", daemon, err)
+		return nil, fmt.Errorf("could not dial docker daemon: %v", err)
 	}
 
 	client := httputil.NewClientConn(c, nil)
@@ -378,6 +384,16 @@ func getPausedContainers() (string, error) {
 	}
 
 	return out, err
+}
+
+func getSliceOfPausedContainers() ([]string, error) {
+	out, err := getPausedContainers()
+	if err == nil {
+		slice := strings.Split(strings.TrimSpace(out), "\n")
+		return slice, err
+	} else {
+		return []string{out}, err
+	}
 }
 
 func unpauseContainer(container string) error {
@@ -768,6 +784,12 @@ func fakeGIT(name string, files map[string]string) (*FakeGIT, error) {
 	if err != nil {
 		return nil, err
 	}
+	if output, err := exec.Command("git", "config", "user.name", "Fake User").CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("error trying to set 'user.name': %s (%s)", err, output)
+	}
+	if output, err := exec.Command("git", "config", "user.email", "fake.user@example.com").CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("error trying to set 'user.email': %s (%s)", err, output)
+	}
 	if output, err := exec.Command("git", "add", "*").CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("error trying to add files to repo: %s (%s)", err, output)
 	}
@@ -892,4 +914,14 @@ func setupRegistry(t *testing.T) func() {
 	}
 
 	return func() { reg.Close() }
+}
+
+// appendDockerHostEnv adds given env slice DOCKER_HOST value if set in the
+// environment. Useful when environment is cleared but we want to preserve DOCKER_HOST
+// to execute tests against a remote daemon.
+func appendDockerHostEnv(env []string) []string {
+	if dockerHost := os.Getenv("DOCKER_HOST"); dockerHost != "" {
+		env = append(env, fmt.Sprintf("DOCKER_HOST=%s", dockerHost))
+	}
+	return env
 }

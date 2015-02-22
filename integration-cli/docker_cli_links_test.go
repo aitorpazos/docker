@@ -15,6 +15,8 @@ import (
 )
 
 func TestLinksEtcHostsRegularFile(t *testing.T) {
+	defer deleteAllContainers()
+
 	runCmd := exec.Command(dockerBinary, "run", "--net=host", "busybox", "ls", "-la", "/etc/hosts")
 	out, _, _, err := runCommandWithStdoutStderr(runCmd)
 	if err != nil {
@@ -24,13 +26,14 @@ func TestLinksEtcHostsRegularFile(t *testing.T) {
 	if !strings.HasPrefix(out, "-") {
 		t.Errorf("/etc/hosts should be a regular file")
 	}
-
-	deleteAllContainers()
-
 	logDone("link - /etc/hosts is a regular file")
 }
 
 func TestLinksEtcHostsContentMatch(t *testing.T) {
+	defer deleteAllContainers()
+
+	testRequires(t, SameHostDaemon)
+
 	runCmd := exec.Command(dockerBinary, "run", "--net=host", "busybox", "cat", "/etc/hosts")
 	out, _, _, err := runCommandWithStdoutStderr(runCmd)
 	if err != nil {
@@ -45,8 +48,6 @@ func TestLinksEtcHostsContentMatch(t *testing.T) {
 	if out != string(hosts) {
 		t.Errorf("container")
 	}
-
-	deleteAllContainers()
 
 	logDone("link - /etc/hosts matches hosts copy")
 }
@@ -64,21 +65,52 @@ func TestLinksPingUnlinkedContainers(t *testing.T) {
 	logDone("links - ping unlinked container")
 }
 
+// Test for appropriate error when calling --link with an invalid target container
+func TestLinksInvalidContainerTarget(t *testing.T) {
+	defer deleteAllContainers()
+
+	runCmd := exec.Command(dockerBinary, "run", "--link", "bogus:alias", "busybox", "true")
+	out, _, err := runCommandWithOutput(runCmd)
+
+	if err == nil {
+		t.Fatal("an invalid container target should produce an error")
+	}
+	if !strings.Contains(out, "Could not get container") {
+		t.Fatal("error output expected 'Could not get container', but got %q instead; err: %v", out, err)
+	}
+
+	logDone("links - linking to non-existent container should not work")
+}
+
 func TestLinksPingLinkedContainers(t *testing.T) {
-	var out string
-	out, _, _ = dockerCmd(t, "run", "-d", "--name", "container1", "busybox", "sleep", "10")
-	idA := stripTrailingCharacters(out)
-	out, _, _ = dockerCmd(t, "run", "-d", "--name", "container2", "busybox", "sleep", "10")
-	idB := stripTrailingCharacters(out)
-	dockerCmd(t, "run", "--rm", "--link", "container1:alias1", "--link", "container2:alias2", "busybox", "sh", "-c", "ping -c 1 alias1 -W 1 && ping -c 1 alias2 -W 1")
-	dockerCmd(t, "kill", idA)
-	dockerCmd(t, "kill", idB)
-	deleteAllContainers()
+	defer deleteAllContainers()
+
+	runCmd := exec.Command(dockerBinary, "run", "-d", "--name", "container1", "--hostname", "fred", "busybox", "top")
+	if _, err := runCommand(runCmd); err != nil {
+		t.Fatal(err)
+	}
+	runCmd = exec.Command(dockerBinary, "run", "-d", "--name", "container2", "--hostname", "wilma", "busybox", "top")
+	if _, err := runCommand(runCmd); err != nil {
+		t.Fatal(err)
+	}
+
+	runArgs := []string{"run", "--rm", "--link", "container1:alias1", "--link", "container2:alias2", "busybox", "sh", "-c"}
+	pingCmd := "ping -c 1 %s -W 1 && ping -c 1 %s -W 1"
+
+	// test ping by alias, ping by name, and ping by hostname
+	// 1. Ping by alias
+	dockerCmd(t, append(runArgs, fmt.Sprintf(pingCmd, "alias1", "alias2"))...)
+	// 2. Ping by container name
+	dockerCmd(t, append(runArgs, fmt.Sprintf(pingCmd, "container1", "container2"))...)
+	// 3. Ping by hostname
+	dockerCmd(t, append(runArgs, fmt.Sprintf(pingCmd, "fred", "wilma"))...)
 
 	logDone("links - ping linked container")
 }
 
 func TestLinksPingLinkedContainersAfterRename(t *testing.T) {
+	defer deleteAllContainers()
+
 	out, _, _ := dockerCmd(t, "run", "-d", "--name", "container1", "busybox", "sleep", "10")
 	idA := stripTrailingCharacters(out)
 	out, _, _ = dockerCmd(t, "run", "-d", "--name", "container2", "busybox", "sleep", "10")
@@ -87,12 +119,15 @@ func TestLinksPingLinkedContainersAfterRename(t *testing.T) {
 	dockerCmd(t, "run", "--rm", "--link", "container_new:alias1", "--link", "container2:alias2", "busybox", "sh", "-c", "ping -c 1 alias1 -W 1 && ping -c 1 alias2 -W 1")
 	dockerCmd(t, "kill", idA)
 	dockerCmd(t, "kill", idB)
-	deleteAllContainers()
 
 	logDone("links - ping linked container after rename")
 }
 
 func TestLinksIpTablesRulesWhenLinkAndUnlink(t *testing.T) {
+	defer deleteAllContainers()
+
+	testRequires(t, SameHostDaemon)
+
 	dockerCmd(t, "run", "-d", "--name", "child", "--publish", "8080:80", "busybox", "sleep", "10")
 	dockerCmd(t, "run", "-d", "--name", "parent", "--link", "child:http", "busybox", "sleep", "10")
 
@@ -112,7 +147,6 @@ func TestLinksIpTablesRulesWhenLinkAndUnlink(t *testing.T) {
 
 	dockerCmd(t, "kill", "child")
 	dockerCmd(t, "kill", "parent")
-	deleteAllContainers()
 
 	logDone("link - verify iptables when link and unlink")
 }
@@ -197,6 +231,8 @@ func TestLinksNotStartedParentNotFail(t *testing.T) {
 }
 
 func TestLinksHostsFilesInject(t *testing.T) {
+	testRequires(t, SameHostDaemon)
+
 	defer deleteAllContainers()
 
 	out, _, err := runCommandWithOutput(exec.Command(dockerBinary, "run", "-itd", "--name", "one", "busybox", "top"))
@@ -249,6 +285,8 @@ func TestLinksNetworkHostContainer(t *testing.T) {
 }
 
 func TestLinksUpdateOnRestart(t *testing.T) {
+	testRequires(t, SameHostDaemon)
+
 	defer deleteAllContainers()
 
 	if out, err := exec.Command(dockerBinary, "run", "-d", "--name", "one", "busybox", "top").CombinedOutput(); err != nil {

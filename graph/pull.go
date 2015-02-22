@@ -73,9 +73,11 @@ func (s *TagStore) CmdPull(job *engine.Job) engine.Status {
 	}
 
 	if len(repoInfo.Index.Mirrors) == 0 && ((repoInfo.Official && repoInfo.Index.Official) || endpoint.Version == registry.APIVersion2) {
-		j := job.Eng.Job("trust_update_base")
-		if err = j.Run(); err != nil {
-			log.Errorf("error updating trust base graph: %s", err)
+		if repoInfo.Official {
+			j := job.Eng.Job("trust_update_base")
+			if err = j.Run(); err != nil {
+				log.Errorf("error updating trust base graph: %s", err)
+			}
 		}
 
 		log.Debugf("pulling v2 repository with local name %q", repoInfo.LocalName)
@@ -84,7 +86,7 @@ func (s *TagStore) CmdPull(job *engine.Job) engine.Status {
 				log.Errorf("Error logging event 'pull' for %s: %s", logName, err)
 			}
 			return engine.StatusOK
-		} else if err != registry.ErrDoesNotExist {
+		} else if err != registry.ErrDoesNotExist && err != ErrV2RegistryUnavailable {
 			log.Errorf("Error from V2 registry: %s", err)
 		}
 
@@ -132,7 +134,6 @@ func (s *TagStore) pullRepository(r *registry.Session, out io.Writer, repoInfo *
 
 	log.Debugf("Registering tags")
 	// If no tag has been specified, pull them all
-	var imageId string
 	if askedTag == "" {
 		for tag, id := range tagsList {
 			repoData.ImgList[id].Tag = tag
@@ -143,7 +144,6 @@ func (s *TagStore) pullRepository(r *registry.Session, out io.Writer, repoInfo *
 		if !exists {
 			return fmt.Errorf("Tag %s not found in repository %s", askedTag, repoInfo.CanonicalName)
 		}
-		imageId = id
 		repoData.ImgList[id].Tag = askedTag
 	}
 
@@ -247,7 +247,7 @@ func (s *TagStore) pullRepository(r *registry.Session, out io.Writer, repoInfo *
 
 	}
 	for tag, id := range tagsList {
-		if askedTag != "" && id != imageId {
+		if askedTag != "" && tag != askedTag {
 			continue
 		}
 		if err := s.Set(repoInfo.LocalName, tag, id, true); err != nil {
@@ -374,6 +374,10 @@ type downloadInfo struct {
 func (s *TagStore) pullV2Repository(eng *engine.Engine, r *registry.Session, out io.Writer, repoInfo *registry.RepositoryInfo, tag string, sf *utils.StreamFormatter, parallel bool) error {
 	endpoint, err := r.V2RegistryEndpoint(repoInfo.Index)
 	if err != nil {
+		if repoInfo.Index.Official {
+			log.Debugf("Unable to pull from V2 registry, falling back to v1: %s", err)
+			return ErrV2RegistryUnavailable
+		}
 		return fmt.Errorf("error getting registry endpoint: %s", err)
 	}
 	auth, err := r.GetV2Authorization(endpoint, repoInfo.RemoteName, true)

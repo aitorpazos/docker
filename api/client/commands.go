@@ -27,7 +27,7 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"github.com/docker/docker/api"
 	"github.com/docker/docker/api/stats"
-	"github.com/docker/docker/dockerversion"
+	"github.com/docker/docker/autogen/dockerversion"
 	"github.com/docker/docker/engine"
 	"github.com/docker/docker/graph"
 	"github.com/docker/docker/nat"
@@ -362,7 +362,7 @@ func (cli *DockerCli) CmdLogin(args ...string) error {
 	} else {
 		// However, if they don't override the username use the
 		// password or email from the cmd line if specified. IOW, allow
-		// then to change/overide them.  And if not specified, just
+		// then to change/override them.  And if not specified, just
 		// use what's in the config file
 		if password == "" {
 			password = authconfig.Password
@@ -786,8 +786,8 @@ func (cli *DockerCli) CmdStart(args ...string) error {
 }
 
 func (cli *DockerCli) CmdUnpause(args ...string) error {
-	cmd := cli.Subcmd("unpause", "CONTAINER", "Unpause all processes within a container", true)
-	cmd.Require(flag.Exact, 1)
+	cmd := cli.Subcmd("unpause", "CONTAINER [CONTAINER...]", "Unpause all processes within a container", true)
+	cmd.Require(flag.Min, 1)
 	utils.ParseFlags(cmd, args, false)
 
 	var encounteredError error
@@ -803,8 +803,8 @@ func (cli *DockerCli) CmdUnpause(args ...string) error {
 }
 
 func (cli *DockerCli) CmdPause(args ...string) error {
-	cmd := cli.Subcmd("pause", "CONTAINER", "Pause all processes within a container", true)
-	cmd.Require(flag.Exact, 1)
+	cmd := cli.Subcmd("pause", "CONTAINER [CONTAINER...]", "Pause all processes within a container", true)
+	cmd.Require(flag.Min, 1)
 	utils.ParseFlags(cmd, args, false)
 
 	var encounteredError error
@@ -2648,7 +2648,7 @@ func (s *containerStats) Collect(cli *DockerCli) {
 				cpuPercent = 0.0
 			)
 			if !start {
-				cpuPercent = calcuateCpuPercent(previousCpu, previousSystem, v)
+				cpuPercent = calculateCpuPercent(previousCpu, previousSystem, v)
 			}
 			start = false
 			s.mu.Lock()
@@ -2701,7 +2701,7 @@ func (s *containerStats) Display(w io.Writer) error {
 }
 
 func (cli *DockerCli) CmdStats(args ...string) error {
-	cmd := cli.Subcmd("stats", "CONTAINER", "Display a live stream of one or more containers' resource usage statistics", true)
+	cmd := cli.Subcmd("stats", "CONTAINER [CONTAINER...]", "Display a live stream of one or more containers' resource usage statistics", true)
 	cmd.Require(flag.Min, 1)
 	utils.ParseFlags(cmd, args, true)
 
@@ -2755,7 +2755,7 @@ func (cli *DockerCli) CmdStats(args ...string) error {
 	return nil
 }
 
-func calcuateCpuPercent(previousCpu, previousSystem uint64, v *stats.Stats) float64 {
+func calculateCpuPercent(previousCpu, previousSystem uint64, v *stats.Stats) float64 {
 	var (
 		cpuPercent = 0.0
 		// calculate the change for the cpu usage of the container in between readings

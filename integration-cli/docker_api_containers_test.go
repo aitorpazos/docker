@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
-	"io/ioutil"
-	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -16,6 +14,8 @@ import (
 )
 
 func TestContainerApiGetAll(t *testing.T) {
+	defer deleteAllContainers()
+
 	startCount, err := getContainerCount()
 	if err != nil {
 		t.Fatalf("Cannot query container count: %v", err)
@@ -48,12 +48,12 @@ func TestContainerApiGetAll(t *testing.T) {
 		t.Fatalf("Container Name mismatch. Expected: %q, received: %q\n", "/"+name, actual)
 	}
 
-	deleteAllContainers()
-
 	logDone("container REST API - check GET json/all=1")
 }
 
 func TestContainerApiGetExport(t *testing.T) {
+	defer deleteAllContainers()
+
 	name := "exportcontainer"
 	runCmd := exec.Command(dockerBinary, "run", "--name", name, "busybox", "touch", "/test")
 	out, _, err := runCommandWithOutput(runCmd)
@@ -84,12 +84,13 @@ func TestContainerApiGetExport(t *testing.T) {
 	if !found {
 		t.Fatalf("The created test file has not been found in the exported image")
 	}
-	deleteAllContainers()
 
 	logDone("container REST API - check GET containers/export")
 }
 
 func TestContainerApiGetChanges(t *testing.T) {
+	defer deleteAllContainers()
+
 	name := "changescontainer"
 	runCmd := exec.Command(dockerBinary, "run", "--name", name, "busybox", "rm", "/etc/passwd")
 	out, _, err := runCommandWithOutput(runCmd)
@@ -121,8 +122,6 @@ func TestContainerApiGetChanges(t *testing.T) {
 		t.Fatalf("/etc/passwd has been removed but is not present in the diff")
 	}
 
-	deleteAllContainers()
-
 	logDone("container REST API - check GET containers/changes")
 }
 
@@ -138,11 +137,7 @@ func TestContainerApiStartVolumeBinds(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	bindPath, err := ioutil.TempDir(os.TempDir(), "test")
-	if err != nil {
-		t.Fatal(err)
-	}
-
+	bindPath := randomUnixTmpDirPath("test")
 	config = map[string]interface{}{
 		"Binds": []string{bindPath + ":/tmp"},
 	}
@@ -175,16 +170,8 @@ func TestContainerApiStartDupVolumeBinds(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	bindPath1, err := ioutil.TempDir("", "test1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.Remove(bindPath1)
-	bindPath2, err := ioutil.TempDir("", "test2")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.Remove(bindPath2)
+	bindPath1 := randomUnixTmpDirPath("test1")
+	bindPath2 := randomUnixTmpDirPath("test2")
 
 	config = map[string]interface{}{
 		"Binds": []string{bindPath1 + ":/tmp", bindPath2 + ":/tmp"},
@@ -262,11 +249,7 @@ func TestVolumesFromHasPriority(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	bindPath, err := ioutil.TempDir(os.TempDir(), "test")
-	if err != nil {
-		t.Fatal(err)
-	}
-
+	bindPath := randomUnixTmpDirPath("test")
 	config = map[string]interface{}{
 		"VolumesFrom": []string{volName},
 		"Binds":       []string{bindPath + ":/tmp"},

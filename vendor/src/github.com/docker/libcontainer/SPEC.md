@@ -53,7 +53,7 @@ are required to be mounted within the rootfs that the runtime will setup.
 | ----------- | ------ | -------------------------------------- | --------------------------------------- |
 | /proc       | proc   | MS_NOEXEC,MS_NOSUID,MS_NODEV           |                                         |
 | /dev        | tmpfs  | MS_NOEXEC,MS_STRICTATIME               | mode=755                                |
-| /dev/shm    | shm    | MS_NOEXEC,MS_NOSUID,MS_NODEV           | mode=1777,size=65536k                   |
+| /dev/shm    | shm    | MS_NOEXEC,MS_NOSUID,MS_NODEV           | mode=1777,size=1g                       |
 | /dev/mqueue | mqueue | MS_NOEXEC,MS_NOSUID,MS_NODEV           |                                         |
 | /dev/pts    | devpts | MS_NOEXEC,MS_NOSUID                    | newinstance,ptmxmode=0666,mode=620,gid5 |
 | /sys        | sysfs  | MS_NOEXEC,MS_NOSUID,MS_NODEV,MS_RDONLY |                                         |
